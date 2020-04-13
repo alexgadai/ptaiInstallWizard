@@ -1,4 +1,8 @@
-﻿# извлекаем мастер токен консула
+﻿# Инсталлятор AI Enterprise и его окружения
+# Настройка интеграционного сервиса
+# версия 0.1 от 13.04.2020
+
+# извлекаем мастер токен консула
 $AIconfig = Get-Content -Path "C:\Program Files (x86)\Positive Technologies\Application Inspector Server\config.json" | ConvertFrom-Json
 $ConsulToken=$AIconfig.Config.ConsulMasterToken
 

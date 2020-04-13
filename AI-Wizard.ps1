@@ -1,4 +1,8 @@
 ﻿#Requires -RunAsAdministrator
+
+# Инсталлятор AI Enterprise и его окружения
+# версия 0.1 от 13.04.2020
+
 # проверяем, заполнен ли $AIHOME (например, если скрипт запускался сразу с данного шага, он будет пустым)
 function Get-AIHome {
 	if ($global:AIHOME -eq $null) {
@@ -134,7 +138,6 @@ if ($step -eq 2) {
 	else {
 		Get-AIHome
 		Write-Host 'Пожалуйста, следуйте указаниям установщика AI Viewer.' -ForegroundColor Yellow
-		# TODO: try catch
 		start (Get-Current-Version-Path "$($global:AIHOME)\aiv" "AIE.Viewer*.exe")
 		Write-Host 'Нажмите Enter когда установка завершится: ' -ForegroundColor Yellow -NoNewline
 		Read-Host
@@ -452,7 +455,7 @@ if ($step -eq 9) {
 		else {
 			Write-Host 'Устанавливаю Git...' -ForegroundColor Yellow	
 			start (Get-Current-Version-Path $PSScriptRoot "Git*.exe") /VERYSILENT
-			Start-Sleep 20
+			Start-Sleep 30
 			# проверяем что Git установлен
 			if ([System.IO.File]::Exists("C:\Program Files\Git\etc\gitconfig")) {
 				Write-Host 'Обновляю конфигурацию Git...' -ForegroundColor Yellow
@@ -461,7 +464,7 @@ if ($step -eq 9) {
 			else {
 				Write-Host 'Ошибка: Git не установлен. Пожалуйста, установите его вручную.' -ForegroundColor Red
 			}
-			$step = 10			
+			$step = 10
 		}
 	}
 }
@@ -471,7 +474,7 @@ if ($step -eq 10) {
 	Write-Host '---ШАГ 10---' -ForegroundColor Green
 	Write-Host 'Патчу интеграционный сервис...' -ForegroundColor Yellow
 	Set-Location -Path C:\TOOLS
-	# подчищаем временные файлы
+	# подчищаем временные файлы на случай если раньше этот шаг уже запускался
 	Get-ChildItem -Path 'C:\TOOLS' *.tmp | foreach { Remove-Item -Path $_.FullName }
 	jar uf ptai-integration-service-0.1-spring-boot.jar BOOT-INF\classes\bootstrap.yml
 	jar uf ptai-integration-service-0.1-spring-boot.jar BOOT-INF\classes\application.yml
@@ -512,7 +515,7 @@ if ($step -eq 11) {
 	Write-Host 'Установка завершена успешно!' -ForegroundColor Yellow
 	Write-Host 'Чтобы встроить Application Inspector в вашу систему сборки кода, добавьте шаг сборки "вызов комадной строки" и воспользуйтесь плагином ptai-cli-plugin-0.1.jar. Пример строки запуска: ' -ForegroundColor Yellow
 	$adminpwd = Get-Content -Path "C:\TOOLS\admin"
-	Write-Host 'java -jar ptai-cli-plugin-0.1.jar --folder "workspace" --node PTAI --project "YourProject" --username "admin" --token $($adminpwd) --url https://$($myFQDN):8443' -ForegroundColor Yellow
+	Write-Host "java -jar ptai-cli-plugin-0.1.jar --folder 'workspacefolder' --node PTAI --project 'YourProject' --username 'admin' --token $($adminpwd) --url https://$($myFQDN):8443" -ForegroundColor Green
 	Write-Host 'Полный список доступных параметров плагина можно получить, если запустить jar без параметров: java -jar ptai-cli-plugin-0.1.jar' -ForegroundColor Yellow
 	Write-Host 'Примечание: для Jenkins указать параметр folder пустым: --folder ""' -ForegroundColor Yellow
 	Write-Host 'Для TeamCity: --folder "%system.teamcity.build.workingDir%"' -ForegroundColor Yellow

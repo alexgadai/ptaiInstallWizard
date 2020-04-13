@@ -1,4 +1,8 @@
-﻿# установить заголовок для аутентификации в Jenkins
+﻿# Инсталлятор AI Enterprise и его окружения
+# Настройка Jenkins
+# версия 0.1 от 13.04.2020
+
+# установить заголовок для аутентификации в Jenkins
 function Set-Auth-Header($username, $password) {
 	# The header is the username and password concatenated together
 	$pair = "$($username):$($password)"
@@ -38,6 +42,7 @@ $myFQDN=((Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win
 if ($step -eq $null) {
 	# Установка Jenkins
 	Write-Host 'Перевожу Jenkins на https...' -ForegroundColor Yellow
+	# Выключаем IE ESC чтобы он не блокировал наши запросы к Jenkins
 	Disable-InternetExplorerESC
 	if (-Not [System.IO.File]::Exists("C:\Program Files (x86)\Jenkins\secrets\initialAdminPassword")) {
 		# разбудить Jenkins
@@ -197,6 +202,7 @@ if ($step -eq 2) {
 	$found = $tmp -match '(java)(.*)(jenkins")'
 	if ($found) {
 		[System.IO.File]::WriteAllLines("C:\TOOLS\run-agent.bat", $matches[0])
+		# Включаем IE ESC обратно
 		Enable-InternetExplorerESC
 	}
 	else {
