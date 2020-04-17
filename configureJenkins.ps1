@@ -1,6 +1,6 @@
 ﻿# Инсталлятор AI Enterprise и его окружения
 # Настройка Jenkins
-# версия 0.1 от 13.04.2020
+# версия 0.2 от 17.04.2020
 
 # установить заголовок для аутентификации в Jenkins
 function Set-Auth-Header($username, $password) {

@@ -1,6 +1,6 @@
 ﻿# Инсталлятор AI Enterprise и его окружения
 # Настройка интеграционного сервиса
-# версия 0.1 от 13.04.2020
+# версия 0.2 от 17.04.2020
 
 if ([System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Application Inspector Server\config.json")) {
 	# извлекаем мастер токен консула
