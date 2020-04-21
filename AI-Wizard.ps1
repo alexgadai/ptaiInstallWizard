@@ -259,9 +259,10 @@ if ($step -eq 4) {
 			$DBCmdup = $DBConn.CreateCommand()
 			$cmd = (whoami /user)
 			$sid = ([regex]"S[\d\-]{1,}").Matches($cmd)[0].Value
-			$DBCmdup.CommandText = "UPDATE `"GlobalMemberEntity`" SET `"Sid`" = '$sid' WHERE `"Id`" = 1"
+			$DBCmdup.CommandText = "INSERT INTO `"GlobalMemberEntity`" (`"Sid`", `"RoleId`") VALUES ('$sid', '1')"
 			$DBCmdup.ExecuteReader()
 			$DBConn.Close()
+			#TODO: restart AI
 		}
 	}
 	# проверяем наличие служб
