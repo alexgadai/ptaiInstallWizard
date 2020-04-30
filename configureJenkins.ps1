@@ -1,6 +1,10 @@
 ﻿# Инсталлятор AI Enterprise и его окружения
 # Настройка Jenkins
-# версия 0.2 от 17.04.2020
+# версия 0.3 от 30.04.2020
+
+Param (
+[string]$step
+)
 
 # установить заголовок для аутентификации в Jenkins
 function Set-Auth-Header($username, $password) {
@@ -21,7 +25,7 @@ function Disable-InternetExplorerESC {
     $UserKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A8-37EF-4b3f-8CFC-4F3A74704073}"
     Set-ItemProperty -Path $AdminKey -Name "IsInstalled" -Value 0
     Set-ItemProperty -Path $UserKey -Name "IsInstalled" -Value 0
-    Stop-Process -Name Explorer
+    Stop-Process -Name Explorer -Force
 }
 
 # включить IE Enhanced Security Configuration
@@ -31,7 +35,7 @@ function Enable-InternetExplorerESC {
     $UserKey = "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{A509B1A8-37EF-4b3f-8CFC-4F3A74704073}"
     Set-ItemProperty -Path $AdminKey -Name "IsInstalled" -Value 1
     Set-ItemProperty -Path $UserKey -Name "IsInstalled" -Value 1
-    Stop-Process -Name Explorer
+    Stop-Process -Name Explorer -Force
 }
 
 # запустить Jenkins и дождаться пока он поднимется
@@ -42,7 +46,7 @@ function Start-Jenkins($url, $header) {
 	# проверяем состояние службы Jenkins
 	$JenkinsServiceStatus = Get-Service Jenkins -ErrorAction Stop
 	if ($JenkinsServiceStatus.Status -ne 'Running') {
-		Write-Host 'Ошибка: Служба Jenkins не запущена. Логи скопированы в папку logs. Пожалуйста устраните ошибку и перезапустите установку с шага 7.' -ForegroundColor Red
+		Write-Host 'Ошибка: Служба Jenkins не запущена. Логи скопированы в папку logs. Пожалуйста устраните ошибку и перезапустите установку с шага 8.' -ForegroundColor Red
 		copy "C:\Program Files (x86)\Jenkins\jenkins.err.log" logs\jenkins.err.log | Out-File -Append logs\install.log	
 		Exit
 	}
@@ -62,18 +66,17 @@ function Start-Jenkins($url, $header) {
 		$timer++
 		if ($timer -eq 5) {
 			Write-Host "Ошибка: Jenkins отвечает ошибкой на запросы к $($url). Логи скопированы в папку logs." -ForegroundColor Red
-			#Exit
+			Exit
 		}
 	}
 	while ($notready)
 }
 
-$step = $args[0]
 Set-Location -Path $PSScriptRoot
 $myFQDN=((Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win32_computersystem).Domain).ToLower()
 [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
 
-if ($step -eq $null) {
+if ($step -eq 1 -or $step -eq '') {
 	# Установка Jenkins
 	# Выключаем IE ESC чтобы он не блокировал наши запросы к Jenkins
 	Disable-InternetExplorerESC
@@ -99,40 +102,42 @@ if ($step -eq $null) {
 	}
 	
 	# останавливаем сервис и обновляем конфигурацию
-	net stop Jenkins | Out-File -Append logs\install.log
-	copy config\jenkins.xml "C:\Program Files (x86)\Jenkins\jenkins.xml"
+	net stop Jenkins | Out-File -Append logs\install.log	
 	copy config\unsecure-config.xml "C:\Program Files (x86)\Jenkins\config.xml"
-	xcopy nodes "C:\Program Files (x86)\Jenkins\nodes\" /E /Y | Out-File -Append logs\install.log
-	copy C:\TOOLS\certs\INT\out\01\private.jks "C:\Program Files (x86)\Jenkins\secrets\private.jks"
-	copy config\jenkins.model.JenkinsLocationConfiguration.xml "C:\Program Files (x86)\Jenkins\jenkins.model.JenkinsLocationConfiguration.xml"
-	copy config\com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.Plugin.xml "C:\Program Files (x86)\Jenkins\com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.Plugin.xml"
-	# jenkins location patch
-	$c_jenkins_location = Get-Content -path 'C:\Program Files (x86)\Jenkins\jenkins.model.JenkinsLocationConfiguration.xml' | Out-String
-	$c_jenkins_location -ireplace '(<jenkinsUrl>)(.*)',"`$1https://$myFQDN`:8080/</jenkinsUrl>" | Set-Content -Path 'C:\Program Files (x86)\Jenkins\jenkins.model.JenkinsLocationConfiguration.xml'
+	if (-Not (Test-Path "C:\Program Files (x86)\Jenkins\nodes\LOCAL")) {
+		mkdir -p "C:\Program Files (x86)\Jenkins\nodes\LOCAL" | Out-File -Append logs\install.log
+	}
+	copy config\node-config.xml "C:\Program Files (x86)\Jenkins\nodes\LOCAL\config.xml"
+	copy C:\TOOLS\certs\server-private.jks "C:\Program Files (x86)\Jenkins\secrets\private.jks"
+	# обновляем location jenkins
+	((Get-Content config\jenkins.model.JenkinsLocationConfiguration.xml -Raw) -ireplace '(<jenkinsUrl>)(.*)',"`$1https://$myFQDN`:8080/</jenkinsUrl>") | Set-Content -Path 'C:\Program Files (x86)\Jenkins\jenkins.model.JenkinsLocationConfiguration.xml'
+	# обновляем пароль в jenkins.xml
+	((Get-Content config\jenkins.xml -Raw) -replace 'P@ssw0rd',$passwords['serverCertificate']) | Set-Content -Path "C:\Program Files (x86)\Jenkins\jenkins.xml"
 	Start-Jenkins "https://$($myFQDN):8080/"
 	
 	# меняем пароль администратора
 	Write-Host 'Обновляю пароль администратора...' -ForegroundColor Yellow
+	$pass = [System.Web.HTTPUtility]::UrlEncode($passwords['adminJenkins'])
 	# берём пароль задаваемый при первичной установке
-	$defaultpass = Get-Content -Path "C:\Program Files (x86)\Jenkins\secrets\initialAdminPassword" | Out-String
+	$defaultpass = Get-Content -Path "C:\Program Files (x86)\Jenkins\secrets\initialAdminPassword" -Raw
 	Set-Auth-Header "admin" $defaultpass.Trim()
-	# меняем на P@ssw0rd для admin
+	# меняем для юзера admin
 	Invoke-WebRequest -Uri "https://$($myFQDN):8080/user/admin/configSubmit" `
 	-Method "POST" `
 	-Headers $global:Headers `
 	-ContentType "application/x-www-form-urlencoded" `
-	-Body "_.fullName=admin&_.description=&_.primaryViewName=&user.password=P%40ssw0rd&user.password2=P%40ssw0rd&_.authorizedKeys=&insensitiveSearch=on&core%3Aapply=&json=%7B%22fullName%22%3A+%22admin%22%2C+%22description%22%3A+%22%22%2C+%22userProperty2%22%3A+%7B%22primaryViewName%22%3A+%22%22%7D%2C+%22userProperty4%22%3A+%7B%22password%22%3A+%22P%40ssw0rd%22%2C+%22%24redact%22%3A+%5B%22password%22%2C+%22password2%22%5D%2C+%22password2%22%3A+%22P%40ssw0rd%22%7D%2C+%22userProperty5%22%3A+%7B%22authorizedKeys%22%3A+%22%22%7D%2C+%22userProperty7%22%3A+%7B%22insensitiveSearch%22%3A+true%7D%2C+%22core%3Aapply%22%3A+%22%22%7D&Submit=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C" | Out-File -Append logs\install.log
-	Write-Host 'Готово! Логин: admin, пароль: P@ssw0rd' -ForegroundColor Yellow
+	-Body "_.fullName=admin&_.description=&_.primaryViewName=&user.password=$($pass)&user.password2=$($pass)&_.authorizedKeys=&insensitiveSearch=on&core%3Aapply=&json=%7B%22fullName%22%3A+%22admin%22%2C+%22description%22%3A+%22%22%2C+%22userProperty2%22%3A+%7B%22primaryViewName%22%3A+%22%22%7D%2C+%22userProperty4%22%3A+%7B%22password%22%3A+%22$($pass)%22%2C+%22%24redact%22%3A+%5B%22password%22%2C+%22password2%22%5D%2C+%22password2%22%3A+%22$($pass)%22%7D%2C+%22userProperty5%22%3A+%7B%22authorizedKeys%22%3A+%22%22%7D%2C+%22userProperty7%22%3A+%7B%22insensitiveSearch%22%3A+true%7D%2C+%22core%3Aapply%22%3A+%22%22%7D&Submit=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C" | Out-File -Append logs\install.log
 	
-	# создаём пользователя svc_ptai с паролем P@ssw0rd
+	# создаём пользователя svc_ptai
 	Write-Host 'Завожу технического пользователя для AI...' -ForegroundColor Yellow
+	$pass = [System.Web.HTTPUtility]::UrlEncode($passwords['svc_ptaiJenkins'])
 	Invoke-WebRequest -Uri "https://$($myFQDN):8080/securityRealm/createAccountByAdmin" `
 	-Method "POST" `
 	-ContentType "application/x-www-form-urlencoded" `
-	-Body "username=svc_ptai&password1=P%40ssw0rd&password2=P%40ssw0rd&fullname=svc_ptai&email=svc_ptai%40mail.ru&json=%7B%22username%22%3A+%22svc_ptai%22%2C+%22password1%22%3A+%22P%40ssw0rd%22%2C+%22%24redact%22%3A+%5B%22password1%22%2C+%22password2%22%5D%2C+%22password2%22%3A+%22P%40ssw0rd%22%2C+%22fullname%22%3A+%22svc_ptai%22%2C+%22email%22%3A+%22svc_ptai%40mail.ru%22%7D&Submit=%D0%A1%D0%BE%D0%B7%D0%B4%D0%B0%D1%82%D1%8C+%D0%BF%D0%BE%D0%BB%D1%8C%D0%B7%D0%BE%D0%B2%D0%B0%D1%82%D0%B5%D0%BB%D1%8F" | Out-File -Append logs\install.log
+	-Body "username=svc_ptai&password1=$($pass)&password2=$($pass)&fullname=svc_ptai&email=svc_ptai%40mail.ru&json=%7B%22username%22%3A+%22svc_ptai%22%2C+%22password1%22%3A+%22$($pass)%22%2C+%22%24redact%22%3A+%5B%22password1%22%2C+%22password2%22%5D%2C+%22password2%22%3A+%22$($pass)%22%2C+%22fullname%22%3A+%22svc_ptai%22%2C+%22email%22%3A+%22svc_ptai%40mail.ru%22%7D&Submit=%D0%A1%D0%BE%D0%B7%D0%B4%D0%B0%D1%82%D1%8C+%D0%BF%D0%BE%D0%BB%D1%8C%D0%B7%D0%BE%D0%B2%D0%B0%D1%82%D0%B5%D0%BB%D1%8F" | Out-File -Append logs\install.log
 	
 	# создаём токен для пользователя svc_ptai
-	Set-Auth-Header "svc_ptai" "P@ssw0rd"
+	Set-Auth-Header "svc_ptai" $passwords['svc_ptaiJenkins']
 	try {
 		$crtoken = Invoke-WebRequest -Uri "https://$($myFQDN):8080/user/svc_ptai/descriptorByName/jenkins.security.ApiTokenProperty/generateNewToken" `
 		-Headers $global:Headers `
@@ -141,24 +146,29 @@ if ($step -eq $null) {
 		-Body "newTokenName=ptai"
 	}
 	catch {
-		Write-Host 'Ошибка: Операция по созданию технического пользователя завершилась неудачей. Логи скопированы в папку logs. Пожалуйста, устраните ошибку, удалите Jenkins и перезапустите установку с шага 7.' -ForegroundColor Red
+		Write-Host 'Ошибка: операция по созданию технического пользователя завершилась неудачей, Jenkins отверг наш запрос. Логи скопированы в папку logs. Пожалуйста, устраните ошибку, удалите Jenkins и перезапустите установку с шага 7.' -ForegroundColor Red
 		$_ | Out-File -Append logs\install.log
 		Exit
 	}
 	$tmp = $crtoken.Content | ConvertFrom-Json
 	$token = $tmp.data.tokenValue
 	if ($token -ne $null) {
-		Write-Host 'Готово! Логин: svc_ptai, пароль: P@ssw0rd' -ForegroundColor Yellow
 		# патчим application.yml
 		Write-Host 'Обновляю конфигурацию application.yml...' -ForegroundColor Yellow
-		$patchAPP = Get-Content -Path "C:\TOOLS\BOOT-INF\classes\application.yml" | Out-String
+		$patchAPP = Get-Content config\application.yml -Raw
+		$patchAPP = $patchAPP -replace '(\spassword\:)(.*)',"`$1 '$($passwords['integrationServiceDB'])'"
 		$patchAPP = $patchAPP -replace '(ci-api-token\:)(.*)',"`$1 $token"
+		$patchAPP = $patchAPP -replace '(key-store-password\:)(.*)',"`$1 '$($passwords['javaCacerts'])'"
+		$patchAPP = $patchAPP -replace '(\skey-password\:)(.*)',"`$1 '$($passwords['serverCertificate'])'"
+		$patchAPP = $patchAPP -replace '(trust-store-password\:)(.*)',"`$1 '$($passwords['javaCacerts'])'"
+		$patchAPP = $patchAPP -replace '(ptai-key-password\:)(.*)',"`$1 '$($passwords['clientCertificate'])'"
 		$patchAPP = $patchAPP -ireplace '(ci-url: https:\/\/)(.*)(:8080)',"`$1$myFQDN`$3"
 		$patchAPP = $patchAPP -ireplace '(ptai-url: https:\/\/)(.*)(:443)',"`$1$myFQDN`$3" | Set-Content -Path "C:\TOOLS\BOOT-INF\classes\application.yml"
-		echo $token > C:\TOOLS\jenkinstoken.txt
+		# патчим liquibase.properties паролем от БД
+		((Get-Content config\liquibase.properties -Raw) -replace 'P@ssw0rd',$passwords['integrationServiceDB']) | Set-Content -Path "C:\TOOLS\BOOT-INF\classes\liquibase\liquibase.properties"
 	}
 	else {
-		Write-Host 'Ошибка: Операция по созданию технического пользователя завершилась неудачей. Логи скопированы в папку logs. Пожалуйста, устраните ошибку, удалите Jenkins и перезапустите установку с шага 7.' -ForegroundColor Red
+		Write-Host 'Ошибка: операция по созданию технического пользователя завершилась неудачей, токен не найден. Логи скопированы в папку logs. Пожалуйста, устраните ошибку, удалите Jenkins и перезапустите установку с шага 7.' -ForegroundColor Red
 		Exit
 	}
 }
@@ -193,33 +203,32 @@ if ($step -eq 2) {
 	-Body "_.domain=_&_.scope=GLOBAL&_.username=&_.password=&_.id=&_.description=&stapler-class=com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl&%24class=com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl&stapler-class=org.jenkinsci.plugins.docker.commons.credentials.DockerServerCredentials&%24class=org.jenkinsci.plugins.docker.commons.credentials.DockerServerCredentials&stapler-class=com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey&%24class=com.cloudbees.jenkins.plugins.sshcredentials.impl.BasicSSHUserPrivateKey&stapler-class=org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl&%24class=org.jenkinsci.plugins.plaincredentials.impl.FileCredentialsImpl&stapler-class=org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl&%24class=org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl&_.userName=admon&_.password=$($adminpwd)&_.serverCaCertificates=-----BEGIN+CERTIFICATE-----%0D%0AMIIFVDCCAzygAwIBAgIIYaQyGbkTSjEwDQYJKoZIhvcNAQELBQAwMjETMBEGA1UE%0D%0ACgwKRG9tYWluLk9SRzEbMBkGA1UEAwwSRG9tYWluLk9SRyBSb290IENBMB4XDTE5%0D%0AMDMwNzA4MjAzNFoXDTM5MDMwNzA4MjAzNFowOjETMBEGA1UECgwKRG9tYWluLk9S%0D%0ARzEjMCEGA1UEAwwaRG9tYWluLk9SRyBJbnRlcm1lZGlhdGUgQ0EwggIiMA0GCSqG%0D%0ASIb3DQEBAQUAA4ICDwAwggIKAoICAQCxEpZw1eGb%2Bfvp0iISDnIp6kP1mqfAPF1H%0D%0AquN6TVgGxpBvavYuOgQIFWjobniH09a4c5ma5qKd%2FCrC7iL2SpuRyJHZLD9PD8yO%0D%0AQpyEnELLNuMvhx%2BqEGI%2BOClJJWxj1P%2B0cvYRtS%2F9vq64ZnL46HItXmqnPUIIwwVH%0D%0AJ6aZloRbfHHVguQepT6izMzWr6zfvr4MjoTzAb4s5R0NsNB0KaUV%2Ffp3V7yVRmUq%0D%0Ao9EHfLFP%2BJy3QwAIfCB4PmkYbX9FDE6hicUFKu9x0w64Jb9on8J0mCfrl3cDYmyp%0D%0AxeAbkypjWHYkNgYav3IpKDJBE2o%2BbID8DJJr%2B53%2F62cKiHT9FqyR%2BDCuoMwc%2BH3P%0D%0A0HAhi4EgbrIgi8h1nibm0AgSTb9DX7GhOEUio48mfE%2FWhI%2F26tVDQ%2B%2Bud8K%2BHeXL%0D%0AWvpfU1UoaQ9ClG26gRDGGcqJMC%2Ft2y1zCMsjfw2lyZVvoquYVhOACqUgK4Wq9PVl%0D%0ApGCovywqhoW1I7e5nuCmH2vQJOQQacdrkkEOpQyS%2BR3nQK2UQofMJHsLHnY7p%2F1m%0D%0Az7M%2BvtsPIl1A0pQrGBPFa4P3ze0UXvsv4YmhplJrPdv%2FfqSySlvCp7dz0SAJ55ts%0D%0Awk%2FvoZL3Wu5MM4oFC%2B%2BJZYM0Za7oUTHz4G5iCJz6N9bkpHQpg7VXTiJm6JyZe2YG%0D%0AH1VTiwyjRQIDAQABo2YwZDAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH%2FBAgwBgEB%0D%0A%2FwIBADAdBgNVHQ4EFgQUEbOON7jUO47uGxr0muy2xOh3vhQwHwYDVR0jBBgwFoAU%0D%0AygE1DVJ%2FLOL%2B2tlTF8fw8cSJcNwwDQYJKoZIhvcNAQELBQADggIBAKBYe1jGYwPo%0D%0A1Av%2FA7DkLQGbXOAvkLmkgYNoCC5%2BJ6AfCeaCu%2Fpzhzi4zlj9f081wz9wYr%2Fr4Ake%0D%0AVlnNOtzejKXLlbvocow842xEGb0z9YGh5pIgyvwvRe1y9rEy7CmmrCQwLGzlGAqK%0D%0A48bD6Y%2FxvT3WWdkxvCQoc%2F3S1WGpBdN6ZiS9VlprpEOl0j1r4ns9Hwm7CQjm95sE%0D%0A9sD%2FvPOSRdp%2Blzfx36gWOWX4r7FAkGSk3yHaRXIP1HKy4PhzZUmjMeIMvN7o86sj%0D%0Azt2MvfeUlU5FvmElBsuMraJ3MDiSaNAOg%2F13bRQBNUjsrLuKBDzWnvS41LdfMXEY%0D%0AedmnNyVflw4100lj7Oul1ovuJ6R1s6X3TFn%2FsRjwAAbVJDTUBop9quu9qHpnBpim%0D%0AqNch6fFTrgZSecRsXqbxPc4mNOv%2B4oz5mGkg%2FQTmq64nQHwPlULjqeEWqPcvrMPx%0D%0ASrJSxHqFxHgECr8uM51Gf2%2BONxvcEdZegRelyU1PMzc%2BctSt5J%2F%2F77h%2BrVYAoVq%2B%0D%0A7qX27UrXTALGQHI1v2tJuVMYIVJuxbzD6lstG8IFqOJPh6lAL%2FmW0WeaC%2F3ShV5D%0D%0AFFhyCIc59CbX9NOHQfItkAi2O8NrjYkoPrhwgKzJCFbB90jVixaMatOVUjdnl0gS%0D%0Aw3oG7pLjhMOWzB6mUoSVpk8QxJCH4pCA%0D%0A-----END+CERTIFICATE-----&_.id=&_.description=&stapler-class=com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.credentials.SlimCredentialsImpl&%24class=com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.credentials.SlimCredentialsImpl&stapler-class=com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.credentials.LegacyCredentialsImpl&%24class=com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.credentials.LegacyCredentialsImpl&stapler-class=com.cloudbees.plugins.credentials.impl.CertificateCredentialsImpl&%24class=com.cloudbees.plugins.credentials.impl.CertificateCredentialsImpl&json=%7B%22domain%22%3A+%22_%22%2C+%22%22%3A+%225%22%2C+%22credentials%22%3A+%7B%22userName%22%3A+%22admin%22%2C+%22password%22%3A+%22$($adminpwd)%22%2C+%22%24redact%22%3A+%22password%22%2C+%22serverCaCertificates%22%3A+%22-----BEGIN+CERTIFICATE-----%5CnMIIFVDCCAzygAwIBAgIIYaQyGbkTSjEwDQYJKoZIhvcNAQELBQAwMjETMBEGA1UE%5CnCgwKRG9tYWluLk9SRzEbMBkGA1UEAwwSRG9tYWluLk9SRyBSb290IENBMB4XDTE5%5CnMDMwNzA4MjAzNFoXDTM5MDMwNzA4MjAzNFowOjETMBEGA1UECgwKRG9tYWluLk9S%5CnRzEjMCEGA1UEAwwaRG9tYWluLk9SRyBJbnRlcm1lZGlhdGUgQ0EwggIiMA0GCSqG%5CnSIb3DQEBAQUAA4ICDwAwggIKAoICAQCxEpZw1eGb%2Bfvp0iISDnIp6kP1mqfAPF1H%5CnquN6TVgGxpBvavYuOgQIFWjobniH09a4c5ma5qKd%2FCrC7iL2SpuRyJHZLD9PD8yO%5CnQpyEnELLNuMvhx%2BqEGI%2BOClJJWxj1P%2B0cvYRtS%2F9vq64ZnL46HItXmqnPUIIwwVH%5CnJ6aZloRbfHHVguQepT6izMzWr6zfvr4MjoTzAb4s5R0NsNB0KaUV%2Ffp3V7yVRmUq%5Cno9EHfLFP%2BJy3QwAIfCB4PmkYbX9FDE6hicUFKu9x0w64Jb9on8J0mCfrl3cDYmyp%5CnxeAbkypjWHYkNgYav3IpKDJBE2o%2BbID8DJJr%2B53%2F62cKiHT9FqyR%2BDCuoMwc%2BH3P%5Cn0HAhi4EgbrIgi8h1nibm0AgSTb9DX7GhOEUio48mfE%2FWhI%2F26tVDQ%2B%2Bud8K%2BHeXL%5CnWvpfU1UoaQ9ClG26gRDGGcqJMC%2Ft2y1zCMsjfw2lyZVvoquYVhOACqUgK4Wq9PVl%5CnpGCovywqhoW1I7e5nuCmH2vQJOQQacdrkkEOpQyS%2BR3nQK2UQofMJHsLHnY7p%2F1m%5Cnz7M%2BvtsPIl1A0pQrGBPFa4P3ze0UXvsv4YmhplJrPdv%2FfqSySlvCp7dz0SAJ55ts%5Cnwk%2FvoZL3Wu5MM4oFC%2B%2BJZYM0Za7oUTHz4G5iCJz6N9bkpHQpg7VXTiJm6JyZe2YG%5CnH1VTiwyjRQIDAQABo2YwZDAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH%2FBAgwBgEB%5Cn%2FwIBADAdBgNVHQ4EFgQUEbOON7jUO47uGxr0muy2xOh3vhQwHwYDVR0jBBgwFoAU%5CnygE1DVJ%2FLOL%2B2tlTF8fw8cSJcNwwDQYJKoZIhvcNAQELBQADggIBAKBYe1jGYwPo%5Cn1Av%2FA7DkLQGbXOAvkLmkgYNoCC5%2BJ6AfCeaCu%2Fpzhzi4zlj9f081wz9wYr%2Fr4Ake%5CnVlnNOtzejKXLlbvocow842xEGb0z9YGh5pIgyvwvRe1y9rEy7CmmrCQwLGzlGAqK%5Cn48bD6Y%2FxvT3WWdkxvCQoc%2F3S1WGpBdN6ZiS9VlprpEOl0j1r4ns9Hwm7CQjm95sE%5Cn9sD%2FvPOSRdp%2Blzfx36gWOWX4r7FAkGSk3yHaRXIP1HKy4PhzZUmjMeIMvN7o86sj%5Cnzt2MvfeUlU5FvmElBsuMraJ3MDiSaNAOg%2F13bRQBNUjsrLuKBDzWnvS41LdfMXEY%5CnedmnNyVflw4100lj7Oul1ovuJ6R1s6X3TFn%2FsRjwAAbVJDTUBop9quu9qHpnBpim%5CnqNch6fFTrgZSecRsXqbxPc4mNOv%2B4oz5mGkg%2FQTmq64nQHwPlULjqeEWqPcvrMPx%5CnSrJSxHqFxHgECr8uM51Gf2%2BONxvcEdZegRelyU1PMzc%2BctSt5J%2F%2F77h%2BrVYAoVq%2B%5Cn7qX27UrXTALGQHI1v2tJuVMYIVJuxbzD6lstG8IFqOJPh6lAL%2FmW0WeaC%2F3ShV5D%5CnFFhyCIc59CbX9NOHQfItkAi2O8NrjYkoPrhwgKzJCFbB90jVixaMatOVUjdnl0gS%5Cnw3oG7pLjhMOWzB6mUoSVpk8QxJCH4pCA%5Cn-----END+CERTIFICATE-----%22%2C+%22id%22%3A+%22%22%2C+%22description%22%3A+%22%22%2C+%22stapler-class%22%3A+%22com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.credentials.SlimCredentialsImpl%22%2C+%22%24class%22%3A+%22com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.credentials.SlimCredentialsImpl%22%7D%7D" | Out-File -Append logs\install.log
 	
 	# извлекаем ID добавленных кредов
-	$c_aiee_creds = Get-Content -path 'C:\Program Files (x86)\Jenkins\credentials.xml' | Out-String
+	$c_aiee_creds = Get-Content -path 'C:\Program Files (x86)\Jenkins\credentials.xml' -Raw
 	$tmp = $c_aiee_creds -match '(<id>)(.*)(</id>)'
 	if ($tmp) {
 		$credid = $matches[0].Split("<")[1].Substring(3)
 	}
 	else {
-		Write-Host 'Ошибка: не удалось найти ID добавленных учётных данных. Логи скопированы в папку logs.'  -ForegroundColor Red
+		Write-Host 'Ошибка: не удалось найти ID добавленных учётных данных. Логи скопированы в папку logs. Пожалуйста, устраните ошибку и перезапустите установку с шага 10.'  -ForegroundColor Red
 		$c_aiee_creds | Out-File -Append logs\install.log
 		Exit
 	}
 
 	# патчим конфиг плагина новым УРЛом
-	$c_aiee_plugin = Get-Content -path 'C:\Program Files (x86)\Jenkins\com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.Plugin.xml' | Out-String
-	$c_aiee_plugin = $c_aiee_plugin -ireplace '(<slimServerSettings>\s*<serverSlimUrl>)(.*)',"`$1https://$myFQDN`:8443</serverSlimUrl>" 
-	
+	$c_aiee_plugin = Get-Content config\com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.Plugin.xml -Raw
+	$c_aiee_plugin = $c_aiee_plugin -ireplace '(<slimServerSettings>\s*<serverSlimUrl>)(.*)',"`$1https://$myFQDN`:8443</serverSlimUrl>"
 	# патчим конфиг плагина ID кредов
 	$c_aiee_plugin -replace '(<serverSlimCredentialsId>)(.*)',"<serverSlimCredentialsId>$credid</serverSlimCredentialsId>" | Set-Content -Path 'C:\Program Files (x86)\Jenkins\com.ptsecurity.appsec.ai.ee.utils.ci.integration.plugin.jenkins.Plugin.xml'
 	
 	# патчим креды новым сертификатом
-	$server_cert = Get-Content -path 'C:\TOOLS\certs\INT\out\01\ca.chain.pem.crt' | Out-String
+	$server_cert = Get-Content -path 'C:\TOOLS\certs\INT\out\01\ca.chain.pem.crt' -Raw
 	$c_aiee_creds -ireplace '(<serverCaCertificates>)([\d\w\W]{1,})(<\/serverCaCertificates>)',"`$1$server_cert`$3" | Set-Content -Path 'C:\Program Files (x86)\Jenkins\credentials.xml'
-
+	
 	# возвращаем защищённую авторизацию в Jenkins
 	Write-Host 'Активирую усиленную авторизацию в Jenkins...' -ForegroundColor Yellow
 	net stop Jenkins | Out-File -Append logs\install.log	
 	copy config\secure-config.xml "C:\Program Files (x86)\Jenkins\config.xml"
-	Set-Auth-Header "admin" "P@ssw0rd"
+	Set-Auth-Header "admin" $passwords['adminJenkins']
 	Start-Jenkins "https://$($myFQDN):8080/computer/LOCAL/" $global:Headers
 	
 	# извлекаем строку запуска jenkins агента и записываем её в run-agent.bat
@@ -235,8 +244,8 @@ if ($step -eq 2) {
 		Start-Sleep 3
 	}
 	else {
-		Write-Host 'Ошибка: строка запуска агента Jenkins не обнаружена. Логи скопированы в папку logs.'  -ForegroundColor Red
+		Write-Host 'Ошибка: строка запуска агента Jenkins не обнаружена. Логи скопированы в папку logs. Пожалуйста, устраните ошибку и перезапустите установку с шага 10.' -ForegroundColor Red
 		$tmp | Out-File -Append logs\install.log
 		Exit
-	}	
+	}
 }

@@ -1,8 +1,9 @@
 ﻿# Инсталлятор AI Enterprise и его окружения
 # Настройка интеграционного сервиса
-# версия 0.2 от 17.04.2020
+# версия 0.3 от 30.04.2020
 
 if ([System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Application Inspector Server\config.json")) {
+	Set-Location -Path $PSScriptRoot
 	# извлекаем мастер токен консула
 	$AIconfig = Get-Content -Path "C:\Program Files (x86)\Positive Technologies\Application Inspector Server\config.json" | ConvertFrom-Json
 	$ConsulToken=$AIconfig.Config.ConsulMasterToken
@@ -22,9 +23,7 @@ if ([System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Appli
 	# патчим bootstrap.yml
 	if ($Token.SecretID) {
 		Write-Host 'Прописываю токен в bootstrap.yml...' -ForegroundColor Yellow
-		$patchBS = Get-Content -Path "C:\TOOLS\BOOT-INF\classes\bootstrap.yml" | Out-String
-		$patchBS -replace '(token\:)(.*)',"`$1 $($Token.SecretID)" | Set-Content -Path "C:\TOOLS\BOOT-INF\classes\bootstrap.yml"
-		echo $Token.SecretID > C:\TOOLS\consultoken.txt
+		((Get-Content config\bootstrap.yml -Raw) -replace '(token\:)(.*)',"`$1 $($Token.SecretID)") | Set-Content -Path "C:\TOOLS\BOOT-INF\classes\bootstrap.yml"
 	}
 	else {
 		Write-Host 'Ошибка: токен не найден. Пожалуйста, устраните ошибку и перезапустите установку с шага 6.' -ForegroundColor Red

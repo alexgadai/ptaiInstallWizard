@@ -1,7 +1,15 @@
 ﻿#Requires -RunAsAdministrator
 
 # Инсталлятор AI Enterprise и его окружения
-# версия 0.2 от 17.04.2020
+# версия 0.3 от 30.04.2020
+
+# Если сценарии Powershell не запускаются в вашей системе из-за ограничений доменной политики, перед запуском данного скрипта выполните команду:
+# Set-ExecutionPolicy RemoteSigned -Scope Process
+
+Param (
+[string]$step,
+[switch]$genpass
+)
 
 # проверяем, заполнен ли AIHOME
 function Get-AIHome {
@@ -28,13 +36,11 @@ function Get-Browser-Path {
 # выясняем название текущей версии дистрибутива из каталога
 function Get-Current-Version-Path([String]$path, [String]$mask) {
 	$filename = $path+'\'+(Get-ChildItem "$($path)\$($mask)").Name
-	if ([System.IO.File]::Exists($filename)) {
-		return $filename
-	}
-	else {
-		Write-Host "Ошибка: Файл $($mask) не найден в каталоге $($path)." -ForegroundColor Red
+	if (-Not [System.IO.File]::Exists($filename)) {
+		Write-Host "Ошибка: файл $($mask) не найден в каталоге $($path)." -ForegroundColor Red
 		Exit
 	}
+	return $filename
 }
 
 # проверяем версию NetFramework
@@ -46,28 +52,40 @@ function Check-NetFramework-Version {
 			[bool] $passed = 1
 		}
 	}
-	if ($passed) {
-		return $passed
-	}
-	else {
-		Write-Host 'Ошибка: Пожалуйста, обновите версию Net Framework до 4.7.2 или выше, а затем перезапустите скрипт.' -ForegroundColor Red
+	if ($passed -eq $null) {
+		Write-Host 'Ошибка: пожалуйста, обновите версию Net Framework до 4.7.2 или выше, а затем перезапустите скрипт.' -ForegroundColor Red
 		Write-Host 'Запускаю установщик обновления Net Framework...' -ForegroundColor Yellow
 		start ndp48-x86-x64-allos-enu.exe
 		Exit
 	}
+	return $passed
 }
 
-
+Set-Location -Path $PSScriptRoot
+if (-Not (Test-Path logs)) {mkdir logs >$null}
 date | Out-File -Append logs\install.log
 $myFQDN = ((Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win32_computersystem).Domain).ToLower()
 $domain = ((Get-WmiObject win32_computersystem).Domain).ToLower()
-$step = $args[0]
+
+# импортируем пароли из файла
+if ([System.IO.File]::Exists("C:\TOOLS\passwords.xml")) {
+	$passwords = Import-Clixml -Path "C:\TOOLS\passwords.xml"
+}
+else {
+	if ($step -gt 1) {
+		Write-Host "Ошибка: первый запуск скрипта должен быть выполнен с первого шага." -ForegroundColor Red
+	}
+	$step = 1
+}
 
 # проверяем что пререквизиты установки выполнены
-if ($step -eq $null) {
-	Write-Host 'Данный скрипт поможет вам установить Application Inspector Enterprise Edition. Если в процессе установки у вас возникнут ошибки, либо придётся перезагрузить компьютер, вы можете продолжить установку с последнего шага, указав номер этого шага в качестве параметра скрипта, например:' -ForegroundColor Yellow
-	Write-Host '.\AI-Wizard.ps1 5' -ForegroundColor Yellow
-	Write-Host 'Таким образом установка продолжится с шага 5.' -ForegroundColor Yellow
+if ($step -eq 1 -or $step -eq '') {
+	Write-Host 'Данный скрипт поможет вам установить Application Inspector Enterprise Edition. Доступные параметры запуска:' -ForegroundColor Yellow
+	Write-Host '-step <номер>: запуск скрипта с указанного шага' -ForegroundColor Yellow
+	Write-Host '-genpass: генерация сложных паролей' -ForegroundColor Yellow
+	Write-Host 'Пример запуска с параметрами:' -ForegroundColor Yellow
+	Write-Host '.\AI-Wizard.ps1 -genpass' -ForegroundColor Yellow
+	Write-Host '.\AI-Wizard.ps1 -step 5' -ForegroundColor Yellow
 	Write-Host
 	Write-Host '---ШАГ 1---' -ForegroundColor Green
 	Write-Host 'Проверяю пререквизиты установки...' -ForegroundColor Yellow
@@ -76,60 +94,103 @@ if ($step -eq $null) {
 		# проверяем что пользователь доменный
 		if ($env:ComputerName -ne $env:UserDomain) {
 			# проверяем переменную %HOMEDRIVE%
-			if ($env:HOMEDRIVE -eq "C:") {
-				# проверяем версию powershell
-				$psver = Get-Host | Select-Object Version
-				$psver.version | Out-File -Append logs\install.log
-				if ($psver.version.Major -ge 5) {
-					# проверяем версию NetFramework
-					if (Check-NetFramework-Version) {
-						Write-Host 'Проверки пройдены успешно.' -ForegroundColor Yellow
-						Get-AIHome
-						# копируем утилиты для установки
-						if (-Not (Test-Path C:\TOOLS)) {
-							Write-Host 'Создаю каталог C:\TOOLS и копирую туда необходимые компоненты для установки...' -ForegroundColor Yellow
-							mkdir -p C:\TOOLS\BOOT-INF\classes | Out-File -Append logs\install.log
-							xcopy jdk1.8 C:\TOOLS\jdk1.8\ /E /Y | Out-File -Append logs\install.log
-							xcopy openssl C:\TOOLS\openssl\ /E /Y | Out-File -Append logs\install.log
-							# обновляем Path
-							[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\TOOLS\openssl\bin;C:\TOOLS\jdk1.8\bin", "Machine")		
-							# обновляем знания текущей сессии Powershell о Path
-							$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-							xcopy certs C:\TOOLS\certs\ /E /Y | Out-File -Append logs\install.log
-							copy ptai-integration-service-0.1-spring-boot.jar C:\TOOLS\ptai-integration-service-0.1-spring-boot.jar
-							copy ptai-cli-plugin-0.1-jar-with-dependencies.jar C:\TOOLS\ptai-cli-plugin-0.1.jar
-							copy config\application.yml C:\TOOLS\BOOT-INF\classes\application.yml
-							copy config\bootstrap.yml C:\TOOLS\BOOT-INF\classes\bootstrap.yml
-							copy agent.jar C:\TOOLS\agent.jar
-							copy plugins\ptai-jenkins-plugin.hpi C:\TOOLS\ptai-jenkins-plugin.hpi
-							copy config\readme.txt C:\TOOLS\readme.txt
-							copy config\run-service.bat C:\TOOLS\run-service.bat
-							# выключаем окно первого запуска IE чтобы работал Invoke-WebRequest
-							Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Internet Explorer\Main" -Name "DisableFirstRunCustomize" -Value 2
+			if ($env:HOMEDRIVE -ne "C:") {
+				Write-Host 'Предупреждение: глобальная переменная %HOMEDRIVE% установлена не на диск C:, текущее значение $($env:HOMEDRIVE)' -ForegroundColor Cyan
+			}
+			# проверяем версию powershell
+			$psver = Get-Host | Select-Object Version
+			$psver.version | Out-File -Append logs\install.log
+			if ($psver.version.Major -ge 5) {
+				# проверяем версию NetFramework
+				if (Check-NetFramework-Version) {
+					Write-Host 'Проверки пройдены успешно.' -ForegroundColor Yellow
+					Get-AIHome
+					# копируем утилиты для установки
+					if (-Not (Test-Path C:\TOOLS)) {
+						# проверяем java и openssl
+						Write-Host 'Создаю каталог C:\TOOLS и копирую туда необходимые компоненты для установки...' -ForegroundColor Yellow
+						mkdir -p C:\TOOLS\BOOT-INF\classes\liquibase | Out-File -Append logs\install.log
+						mkdir -p C:\TOOLS\certs\INT | Out-File -Append logs\install.log
+						mkdir -p C:\TOOLS\certs\ROOT | Out-File -Append logs\install.log
+						mkdir -p C:\TOOLS\certs\conf | Out-File -Append logs\install.log
+						mkdir -p C:\TOOLS\certs\src | Out-File -Append logs\install.log
+						if ($env:Path -match 'jdk|java') {
+							Write-Host 'Предупреждение: в Path обнаружена Java.' -ForegroundColor Cyan
 						}
-						$step = 2
+						xcopy jdk1.8 C:\TOOLS\jdk1.8\ /E /Y | Out-File -Append logs\install.log
+						if ($env:Path -match 'openssl') {
+							Write-Host 'Предупреждение: в Path обнаружен Openssl.' -ForegroundColor Cyan
+							# обновляем Path
+							[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\TOOLS\jdk1.8\bin", "Machine")
+						}
+						else {
+							xcopy openssl C:\TOOLS\openssl\ /E /Y | Out-File -Append logs\install.log
+							[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\TOOLS\openssl\bin;C:\TOOLS\jdk1.8\bin", "Machine")
+						}
+						# обновляем знания текущей сессии Powershell о Path
+						$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+						copy config\root_ca.conf C:\TOOLS\certs\conf\root_ca.conf
+						copy config\int_ca.conf C:\TOOLS\certs\conf\int_ca.conf
+						copy config\ssl.server.conf C:\TOOLS\certs\conf\ssl.server.conf
+						copy config\ssl.client.conf C:\TOOLS\certs\conf\ssl.client.conf
+						copy ptai-integration-service-0.1-spring-boot.jar C:\TOOLS\ptai-integration-service-0.1-spring-boot.jar
+						copy ptai-cli-plugin-0.1-jar-with-dependencies.jar C:\TOOLS\ptai-cli-plugin-0.1.jar
+						copy agent.jar C:\TOOLS\agent.jar
+						copy plugins\ptai-jenkins-plugin.hpi C:\TOOLS\ptai-jenkins-plugin.hpi
+						copy config\run-service.bat C:\TOOLS\run-service.bat
+						copy generateCertificates.ps1 C:\TOOLS\certs\src\generateCertificates.ps1
+						# выключаем окно первого запуска IE чтобы работал Invoke-WebRequest
+						Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Internet Explorer\Main" -Name "DisableFirstRunCustomize" -Value 2
 					}
-				}
-				else {
-					Write-Host 'Ошибка: Пожалуйста, обновите версию Powershell до 5-ой или выше, а затем перезапустите скрипт.' -ForegroundColor Red
-					Write-Host 'Запускаю установщик обновления Powershell...' -ForegroundColor Yellow
-					start powershell_5-1_Win8.1AndW2K12R2-KB3191564-x64.msu
-					Check-NetFramework-Version
-					Exit
+					# создаём пароли для установки
+					if (-Not [System.IO.File]::Exists("C:\TOOLS\passwords.xml")) {
+						# генерируем безопасные пароли
+						if ($genpass) {
+							Write-Host 'Генерирую безопасные пароли...' -ForegroundColor Yellow
+							Add-Type -AssemblyName System.Web
+							$length = 12
+							$nonAlphaChars = 2
+							$passwords = @{
+								# временный костыль: убираем неугодные символы
+								'serverCertificate'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars) -replace '\^|\||&|<|>|-',"!";
+								'clientCertificate'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars) -replace '\^|\||&|<|>|-',"!";
+								'javaCacerts'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+								'adminJenkins'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+								'svc_ptaiJenkins'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+								'integrationServiceDB'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+							}
+						}
+						# или берём простые
+						else {
+							$passwords = @{
+								'serverCertificate'='P@ssw0rd';
+								'clientCertificate'='P@ssw0rd';
+								'javaCacerts'='changeit';
+								'adminJenkins'='P@ssw0rd';
+								'svc_ptaiJenkins'='P@ssw0rd';
+								'integrationServiceDB'='P@ssw0rd';
+							}
+						}
+						Export-Clixml -Path "C:\TOOLS\passwords.xml" -InputObject $passwords							
+					}
+					$step = 2
 				}
 			}
 			else {
-				Write-Host 'Ошибка: Пожалуйста, измените значение глобальной переменной %HOMEDRIVE% на диск C:.' -ForegroundColor Red
+				Write-Host 'Ошибка: пожалуйста, обновите версию Powershell до 5-ой или выше, а затем перезапустите скрипт.' -ForegroundColor Red
+				Write-Host 'Запускаю установщик обновления Powershell...' -ForegroundColor Yellow
+				start powershell_5-1_Win8.1AndW2K12R2-KB3191564-x64.msu
+				Check-NetFramework-Version
 				Exit
-			}			
+			}
 		}
 		else {
-			Write-Host 'Ошибка: Пожалуйста, войдите под доменной учётной записью с правами локального администратора.' -ForegroundColor Red
+			Write-Host 'Ошибка: пожалуйста, войдите под доменной учётной записью с правами локального администратора.' -ForegroundColor Red
 			Exit
 		}
 	}
 	else {
-		Write-Host 'Ошибка: Пожалуйста, введите компьютер в домен.' -ForegroundColor Red
+		Write-Host 'Ошибка: пожалуйста, введите компьютер в домен.' -ForegroundColor Red
 		Exit
 	}
 }
@@ -160,7 +221,7 @@ if ($step -eq 2) {
 if ($step -eq 3) {
 	Write-Host '---ШАГ 3---' -ForegroundColor Green
 	# проверяем что этот шаг не выполнялся
-	if ([System.IO.File]::Exists("C:\TOOLS\certs\INT\out\01\private.jks")) {
+	if ([System.IO.File]::Exists("C:\TOOLS\certs\server-private.jks")) {
 		Write-Host 'Этот шаг уже был выполнен, переходим к следующему.' -ForegroundColor Yellow
 	}
 	else {
@@ -174,27 +235,27 @@ if ($step -eq 3) {
 				Write-Host 'Ошибка: Notepad++ не установлен. Пожалуйста, установите его вручную.' -ForegroundColor Red
 			}
 		}
-		Write-Host 'Конфигурирую утилиту для выпуска сертификатов...' -ForegroundColor Yellow
-		((Get-Content -path C:\TOOLS\certs\conf\root\ca.conf -Raw) -replace 'test.com',$domain) | Set-Content -Path C:\TOOLS\certs\conf\root\ca.conf
-		((Get-Content -path C:\TOOLS\certs\conf\int\ssl.server.conf -Raw) -replace 'test.com',$domain) | Set-Content -Path C:\TOOLS\certs\conf\int\ssl.server.conf
-		((Get-Content -path C:\TOOLS\certs\conf\int\ca.conf -Raw) -replace 'test.com',$domain) | Set-Content -Path C:\TOOLS\certs\conf\int\ca.conf
-		((Get-Content -path C:\TOOLS\certs\conf\int\ssl.client.conf -Raw) -replace 'test.com',$domain) | Set-Content -Path C:\TOOLS\certs\conf\int\ssl.client.conf
-		Write-Host 'Запускаю процедуру генерации самоподписанных сертификатов...' -ForegroundColor Yellow
-		Set-Location -Path C:\TOOLS\certs\src
-		Invoke-expression -Command C:\TOOLS\certs\src\ROOT.ps1 2>&1 | Out-File -Append "C:\TOOLS\certs\install.log"
+		
+		Invoke-expression -Command C:\TOOLS\certs\src\generateCertificates.ps1 2>&1 | Out-File -Append logs\install.log
 		Set-Location -Path $PSScriptRoot
 		# проверяем что сертификаты сгенерировались
-		if ([System.IO.File]::Exists("C:\TOOLS\certs\INT\out\01\private.jks")) {
+		if ([System.IO.File]::Exists("C:\TOOLS\certs\server-private.jks")) {
+			Write-Host 'Сертификаты были сгенерированы успешно и сохранены в C:\TOOLS\certs\INT\out.' -ForegroundColor Yellow
+			# меняем пароль на java cacerts если запуск был с параметром genpass
+			if ($passwords['javaCacerts'] -ne 'changeit') {
+				Write-Host 'Меняю пароль на хранилище сертификатов Java...' -ForegroundColor Yellow
+				keytool -storepasswd -new "$($passwords['javaCacerts'])" -storepass changeit -keystore "C:\TOOLS\jdk1.8\jre\lib\security\cacerts" 2>&1 | Out-File -Append logs\install.log
+			}
 			# добавляем серты в cacerts java
-			keytool -importkeystore -noprompt -srckeystore C:\TOOLS\certs\INT\out\01\private.jks -srcstorepass P@ssw0rd -destkeystore C:\TOOLS\jdk1.8\jre\lib\security\cacerts -deststorepass changeit 2>&1 | Out-File -Append "C:\TOOLS\certs\install.log"
-			copy C:\TOOLS\certs\INT\out\01\ca.chain.pem.crt C:\TOOLS\server-cert.txt
-			Write-Host 'Сертификаты были сгенерированы успешно и сохранены в C:\TOOLS\certs\INT\out. Пароль: P@ssw0rd' -ForegroundColor Yellow
+			Write-Host 'Добавляю сертификаты в хранилище сертификатов Java...' -ForegroundColor Yellow
+			keytool -importkeystore -noprompt -srckeystore "C:/TOOLS/certs/server-private.jks" -srcstorepass "$($passwords['serverCertificate'])" -destkeystore "C:\TOOLS\jdk1.8\jre\lib\security\cacerts" -deststoretype JKS -deststorepass "$($passwords['javaCacerts'])" 2>&1 | Out-File -Append logs\install.log
+			keytool -importkeystore -noprompt -srckeystore "C:/TOOLS/certs/ssl.client.brief.pfx" -srcstorepass "$($passwords['clientCertificate'])" -srcstoretype pkcs12 -destkeystore "C:\TOOLS\jdk1.8\jre\lib\security\cacerts" -deststoretype JKS -deststorepass "$($passwords['javaCacerts'])" 2>&1 | Out-File -Append logs\install.log
 			Write-Host 'Импортирую сертификаты в хранилище Windows...' -ForegroundColor Yellow
 			Import-Certificate -FilePath "C:\TOOLS\certs\ROOT\certs\RootCA.pem.crt" -CertStoreLocation Cert:\LocalMachine\Root | Out-File -Append logs\install.log
 			Import-Certificate -FilePath "C:\TOOLS\certs\INT\certs\IntermediateCA.pem.crt" -CertStoreLocation Cert:\LocalMachine\CA | Out-File -Append logs\install.log
 		}
 		else {
-			Write-Host 'Ошибка: Сертификаты не созданы. Логи записаны в C:\TOOLS\certs\install.log. Пожалуйста, устраните ошибку и перезапустите установку с шага 3.' -ForegroundColor Red
+			Write-Host 'Ошибка: сертификаты не созданы. Логи скопированы в папку logs. Пожалуйста, устраните ошибку и перезапустите установку с шага 3.' -ForegroundColor Red
 			Exit
 		}
 	}
@@ -208,8 +269,8 @@ if ($step -eq 4) {
 	if (-Not [System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Application Inspector Server\Services\gateway\AIE.Gateway.exe")) {
 		Get-AIHome
 		# проверяем наличие пользователя в домене
+		Write-Host "Проверяю связь с домен контроллером..." -ForegroundColor Yellow
 		do {
-			Write-Host "Проверяю связь с домен контроллером..." -ForegroundColor Yellow
 			if ($matches -ne $null) {
 				$domain = $matches[0]
 			}
@@ -223,14 +284,15 @@ if ($step -eq 4) {
 		
 		Write-Host 'Пожалуйста, следуйте указаниям установщика AI Server.' -ForegroundColor Yellow
 		Write-Host 'Данные для установки: ' -ForegroundColor Yellow
+		# если домен, требуемый для инсталлятора, отличается от текущего, укажем на это пользователю
 		if ($domainfound -and $domain -ne ((Get-WmiObject win32_computersystem).Domain).ToLower()) {
-			Write-Host "Важно: при установке укажите, пожалуйста, домен в таком виде: $($domain)" -ForegroundColor Cyan
+			Write-Host "Предупреждение: при установке укажите, пожалуйста, домен в таком виде: $($domain)" -ForegroundColor Cyan
 		}
 		else {
 			Write-Host "Домен: "((Get-WmiObject win32_computersystem).Domain).ToLower() -ForegroundColor Yellow
 		}
 		Write-Host 'Расположение сертификата: C:\TOOLS\certs\INT\out\00\ssl.server.brief.pfx' -ForegroundColor Yellow
-		Write-Host 'Пароль от сертификата: P@ssw0rd' -ForegroundColor Yellow
+		Write-Host "Пароль от сертификата: $($passwords['serverCertificate'])" -ForegroundColor Yellow
 		if ($domainfound) {
 			$proc = Start-Process (Get-Current-Version-Path "$($global:AIHOME)\aie" "AIE.Server*.exe") -passthru
 		}
@@ -262,7 +324,9 @@ if ($step -eq 4) {
 			$DBCmdup.CommandText = "INSERT INTO `"GlobalMemberEntity`" (`"Sid`", `"RoleId`") VALUES ('$sid', '1')"
 			$DBCmdup.ExecuteReader()
 			$DBConn.Close()
-			#TODO: restart AI
+			# рестарт службы аутентификации
+			net stop AI.Enterprise.AuthService | Out-File -Append logs\install.log
+			net start AI.Enterprise.AuthService | Out-File -Append logs\install.log
 		}
 	}
 	# проверяем наличие служб
@@ -270,7 +334,7 @@ if ($step -eq 4) {
 		$AIServiceStatus = Get-Service AI.*,Consul,RabbitMQ,PostgreSQL -ErrorAction Stop
 	}
 	catch {
-		Write-Host 'Ошибка проверки служб:'$_ -ForegroundColor Red
+		Write-Host 'Ошибка проверки служб: '$_ -ForegroundColor Red
 		Write-Host 'Логи скопированы в папку logs. Пожалуйста, устраните ошибку и продолжите установку с шага 5.' -ForegroundColor Red
 		xcopy "C:\ProgramData\Application Inspector\Logs\deploy" logs\deploy\ /E /Y | Out-File -Append logs\install.log	
 		Exit
@@ -330,7 +394,7 @@ if ($step -eq 5) {
 		Write-Host 'Пожалуйста, следуйте указаниям установщика AI Agent.' -ForegroundColor Yellow
 		Write-Host 'Данные для установки: ' -ForegroundColor Yellow
 		Write-Host 'Расположение сертификата: C:\TOOLS\certs\INT\out\01\ssl.client.brief.pfx' -ForegroundColor Yellow
-		Write-Host 'Пароль от сертификата: P@ssw0rd' -ForegroundColor Yellow
+		Write-Host "Пароль от сертификата: $($passwords['clientCertificate'])" -ForegroundColor Yellow
 		Write-Host "Адрес сервера: https://$($myFQDN)" -ForegroundColor Yellow
 		$proc = Start-Process (Get-Current-Version-Path "$($global:AIHOME)\aic" "AIE.Agent*.exe") -passthru
 		Wait-Process $proc.Id
@@ -347,12 +411,16 @@ if ($step -eq 5) {
 if ($step -eq 6) {
 	Write-Host '---ШАГ 6---' -ForegroundColor Green
 	# проверяем что этот шаг уже запускался
-	if ([System.IO.File]::Exists("C:\TOOLS\consultoken.txt")) {
+	if ([System.IO.File]::Exists("C:\TOOLS\BOOT-INF\classes\bootstrap.yml")) {
 		Write-Host 'Этот шаг уже был выполнен, переходим к следующему.' -ForegroundColor Yellow
 	}
 	else {
 		Write-Host 'Прописываю настройки интеграционного сервиса в Consul...' -ForegroundColor Yellow
 		Invoke-expression -Command $PSScriptRoot\integrationServiceConsulPatch.ps1 -ErrorAction Stop
+		if (-Not [System.IO.File]::Exists("C:\TOOLS\BOOT-INF\classes\bootstrap.yml")) {
+			Write-Host 'Ошибка: Consul не настроен, логи скопированы в папку logs. Пожалуйста, устраните ошибку и перезапустите установку с шага 6.' -ForegroundColor Red
+			Exit
+		}
 	}
 	$step = 7
 }
@@ -371,7 +439,7 @@ if ($step -eq 7) {
 			Write-Host 'Устанавливаю Google Chrome...' -ForegroundColor Yellow
 			$proc = Start-Process msiexec -ArgumentList "/i $(Get-Current-Version-Path $PSScriptRoot "google*.msi") /quiet /l*v `"$($PSScriptRoot)\logs\chrome.log`"" -passthru
 			Wait-Process $proc.Id
-			[bool] $Chromestatus = Get-Content "$($PSScriptRoot)\logs\chrome.log" | Select-String "Installation failed"
+			[bool] $Chromestatus = Get-Content $PSScriptRoot\logs\chrome.log | Select-String "Installation failed"
 			if ($Chromestatus) {
 				Write-Host 'Ошибка: Google Chrome не установлен, логи скопированы в папку logs. Пожалуйста, установите его вручную.' -ForegroundColor Red
 			}
@@ -380,7 +448,7 @@ if ($step -eq 7) {
 		Write-Host 'Устанавливаю Jenkins...' -ForegroundColor Yellow
 		$proc = Start-Process msiexec -ArgumentList "/i $(Get-Current-Version-Path $PSScriptRoot "jenkins*.msi") /quiet /l*v `"$($PSScriptRoot)\logs\jenkins.log`"" -passthru
 		Wait-Process $proc.Id
-		[bool] $Jstatus = Get-Content "$($PSScriptRoot)\logs\jenkins.log" | Select-String "Installation failed"
+		[bool] $Jstatus = Get-Content $PSScriptRoot\logs\jenkins.log | Select-String "Installation failed"
 		if ($Jstatus) {
 			Write-Host 'Ошибка: Jenkins не установлен, логи скопированы в папку logs. Пожалуйста, установите его вручную и продолжите установку с шага 8.' -ForegroundColor Red
 			Exit
@@ -391,18 +459,15 @@ if ($step -eq 7) {
 		$JenkinsService = Get-Service Jenkins -ErrorAction Stop
 	}
 	catch {
-		Write-Host 'Ошибка проверки службы Jenkins:'$_ -ForegroundColor Red
+		Write-Host 'Ошибка: служба Jenkins не найдена: '$_ -ForegroundColor Red
 		Write-Host 'Пожалуйста, устраните ошибку и продолжите установку с шага 8.' -ForegroundColor Red
 		Exit
 	}
-	if ($JenkinsService.Status -ne 'Running') {
-		do {
-			xcopy "C:\Program Files (x86)\Jenkins\jenkins.err.log" logs\jenkins.err.log /Y | Out-File -Append logs\install.log		
-			Write-Host 'Ошибка: Служба Jenkins не запущена. Логи скопированы в папку logs. Пожалуйста, поднимите службу Jenkins и нажмите Enter для продолжения установки: ' -ForegroundColor Red -NoNewline
-			Read-Host
-			$JenkinsService = Get-Service Jenkins -ErrorAction SilentlyContinue
-		}
-		while ($JenkinsService.Status -ne 'Running')
+	while ($JenkinsService.Status -ne 'Running') {
+		copy "C:\Program Files (x86)\Jenkins\jenkins.err.log" logs\jenkins.err.log
+		Write-Host 'Ошибка: служба Jenkins не запущена. Логи скопированы в папку logs. Пожалуйста, поднимите службу Jenkins и нажмите Enter для продолжения установки: ' -ForegroundColor Red -NoNewline
+		Read-Host
+		$JenkinsService = Get-Service Jenkins -ErrorAction SilentlyContinue
 	}
 	$step = 8
 }
@@ -410,16 +475,16 @@ if ($step -eq 7) {
 # конфигурируем Jenkins
 if ($step -eq 8) {
 	Write-Host '---ШАГ 8---' -ForegroundColor Green
-	# проверяем что плагины Jenkins уже установлены
-	if ([System.IO.File]::Exists("C:\TOOLS\jenkinstoken.txt")) {
+	# проверяем что настройка Jenkins уже производилась
+	if ([System.IO.File]::Exists("C:\TOOLS\BOOT-INF\classes\application.yml")) {
 		Write-Host 'Этот шаг уже был выполнен, переходим к следующему.' -ForegroundColor Yellow
 	}
 	else {
 		Write-Host 'Настраиваю Jenkins...' -ForegroundColor Yellow 
 		Write-Host 'Копирую плагины...' -ForegroundColor Yellow
 		xcopy plugins "C:\Program Files (x86)\Jenkins\plugins\" /E /Y | Out-File -Append logs\install.log
-		Invoke-expression -Command $PSScriptRoot\configureJenkins.ps1 -ErrorAction Stop
-		if (-Not [System.IO.File]::Exists("C:\TOOLS\jenkinstoken.txt")) {
+		Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 1" -ErrorAction Stop
+		if (-Not [System.IO.File]::Exists("C:\TOOLS\BOOT-INF\classes\application.yml")) {
 			Write-Host 'Ошибка: токен для доступа к Jenkins не сформирован. Пожалуйста, устраните ошибку и перезапустите установку с шага 8.' -ForegroundColor Red
 			Exit
 		}
@@ -430,28 +495,48 @@ if ($step -eq 8) {
 # конфигурируем интеграционный сервис
 if ($step -eq 9) {
 	Write-Host '---ШАГ 9---' -ForegroundColor Green
-	Write-Host 'Патчу интеграционный сервис...' -ForegroundColor Yellow
-	Set-Location -Path C:\TOOLS
-	# подчищаем временные файлы на случай если раньше этот шаг уже запускался
-	Get-ChildItem -Path 'C:\TOOLS' *.tmp | foreach { Remove-Item -Path $_.FullName }
-	jar uf ptai-integration-service-0.1-spring-boot.jar BOOT-INF\classes\
-	Write-Host 'Запускаю интеграционный сервис...' -ForegroundColor Yellow
-	start C:\TOOLS\run-service.bat
-	$timer = 0
-	do {
-		Start-Sleep 1
-		$timer++
-		if ([System.IO.File]::Exists("C:\TOOLS\admin")) {
-			[bool] $pluginoutput = 1
+	# проверяем что данный шаг уже запускался
+	if ([System.IO.File]::Exists("C:\TOOLS\admin")) {
+		# проверяем, что интеграционный сервис запущен
+		$proc = Get-Process java | Where CPU -ne $null | Select Id
+		for ($i=0; $i -lt $proc.Length; $i++) {
+			$tmp = Invoke-expression -Command "wmic process where processid=$($proc[$i].Id) get commandline"
+			if ($tmp -match "ptai-integration-service-0.1-spring-boot.jar") {
+				[bool] $servicerunning = 1
+			}
 		}
-		elseif ($timer -eq 80) {
-			[bool] $pluginoutput = 0
+		# если нет, запускаем его
+		if ($servicerunning -eq $null)
+		{
+			Write-Host 'Запускаю интеграционный сервис...' -ForegroundColor Yellow
+			start C:\TOOLS\run-service.bat
 		}
+		Write-Host 'Этот шаг уже был выполнен, переходим к следующему.' -ForegroundColor Yellow
 	}
-	while ($pluginoutput -eq $null)
-	if (-Not $pluginoutput) {
-		Write-Host 'Интеграционный сервис не смог запуститься. Пожалуйста, исправьте ошибку и запустите его вручную (C:\TOOLS\run-service.bat), после чего продолжите установку с шага 10.' -ForegroundColor Red
-		Exit
+	else {
+		Write-Host 'Патчу интеграционный сервис...' -ForegroundColor Yellow
+		Set-Location -Path C:\TOOLS
+		# подчищаем временные файлы на случай если раньше этот шаг уже запускался
+		Get-ChildItem -Path 'C:\TOOLS' *.tmp | foreach { Remove-Item -Path $_.FullName }
+		# обновляем файлы в jar
+		jar uf ptai-integration-service-0.1-spring-boot.jar BOOT-INF\classes\
+		Write-Host 'Запускаю интеграционный сервис...' -ForegroundColor Yellow
+		start C:\TOOLS\run-service.bat
+		$timer = 0
+		while ($pluginoutput -eq $null) {
+			if ([System.IO.File]::Exists("C:\TOOLS\admin")) {
+				[bool] $pluginoutput = 1
+			}
+			elseif ($timer -eq 80) {
+				[bool] $pluginoutput = 0
+			}
+			Start-Sleep 1
+			$timer++
+		}
+		if (-Not $pluginoutput) {
+			Write-Host 'Ошибка: интеграционный сервис не смог запуститься. Пожалуйста, исправьте ошибку и запустите его вручную (C:\TOOLS\run-service.bat), после чего продолжите установку с шага 10.' -ForegroundColor Red
+			Exit
+		}
 	}
 	$step = 10
 }
@@ -459,29 +544,53 @@ if ($step -eq 9) {
 # Продолжаем патчить Jenkins
 if ($step -eq 10) {
 	Write-Host '---ШАГ 10---' -ForegroundColor Green
-	Write-Host 'Продолжаю настройку Jenkins...' -ForegroundColor Yellow 
-	Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 2" -ErrorAction Stop
-	if (-Not [System.IO.File]::Exists("C:\TOOLS\run-agent.bat")) {
-		Write-Host 'Ошибка: данные для запуска агента Jenkins не найдены.' -ForegroundColor Red
-		Exit
+	# проверяем что данный шаг уже запускался
+	Set-Location -Path $PSScriptRoot
+	if ([System.IO.File]::Exists("C:\TOOLS\run-agent.bat") `
+		-and [System.IO.File]::Exists("C:\TOOLS\readme.txt") `
+		-and [System.IO.File]::Exists("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\run-service.bat") `
+		-and [System.IO.File]::Exists("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\run-agent.bat")) {
+		Write-Host 'Этот шаг уже был выполнен.' -ForegroundColor Yellow		
+		# проверяем, что агент jenkins запущен
+		$proc = Get-Process java | Where CPU -ne $null | Select Id
+		for ($i=0; $i -lt $proc.Length; $i++) {
+			$tmp = Invoke-expression -Command "wmic process where processid=$($proc[$i].Id) get commandline"
+			if ($tmp -match "agent.jar") {
+				[bool] $agentrunning = 1
+			}
+		}
+		# если нет, запускаем его
+		if ($agentrunning -eq $null)
+		{
+			Write-Host 'Запускаю агента Jenkins...' -ForegroundColor Yellow	
+			start C:\TOOLS\run-agent.bat
+		}
 	}
-	Write-Host 'Запускаю агента Jenkins...' -ForegroundColor Yellow	
-	start C:\TOOLS\run-agent.bat
-	# заменяем ключевые значения в readme.txt
-	$adminpwd = Get-Content -Path "C:\TOOLS\admin"
-	$readme = Get-Content -Path C:\TOOLS\readme.txt | Out-String
-	$readme = $readme -ireplace '%myFQDN%',"$myFQDN"
-	$readme -ireplace '%adminpwd%',"$adminpwd" | Set-Content -Path C:\TOOLS\readme.txt
-	# подчищаем временные файлы
-	Get-ChildItem -Path 'C:\TOOLS' *.tmp | foreach { Remove-Item -Path $_.FullName }
-	# добавляем каталогу права на запись для пользователей чтобы не было проблем при ручном запуске скриптов
-	$ACL = Get-Acl "C:\TOOLS"
-	$ACL.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule([System.Security.Principal.NTAccount]"users","fullcontrol", "ContainerInherit, ObjectInherit", "None", "Allow")))
-	Set-Acl "C:\TOOLS" $ACL
-	# помещаем ссылки на скрипт в автозапуск текущего пользователя
-	Write-Host 'Добавляю символические ссылки в автозапуск системы...' -ForegroundColor Yellow
-	New-Item -Path $env:APPDATA"\Microsoft\Windows\Start Menu\Programs\Startup\run-service.bat" -ItemType SymbolicLink -Value C:\TOOLS\run-service.bat | Out-File -Append logs\install.log
-	New-Item -Path $env:APPDATA"\Microsoft\Windows\Start Menu\Programs\Startup\run-agent.bat" -ItemType SymbolicLink -Value C:\TOOLS\run-agent.bat | Out-File -Append logs\install.log
+	else {
+		Write-Host 'Продолжаю настройку Jenkins...' -ForegroundColor Yellow 
+		Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 2" -ErrorAction Stop
+		if (-Not [System.IO.File]::Exists("C:\TOOLS\run-agent.bat")) {
+			Write-Host 'Ошибка: данные для запуска агента Jenkins не найдены. Пожалуйста, устраните ошибку и перезапустите установку с шага 10.' -ForegroundColor Red
+			Exit
+		}
+		Write-Host 'Запускаю агента Jenkins...' -ForegroundColor Yellow	
+		start C:\TOOLS\run-agent.bat
+		# заменяем ключевые значения в readme.txt
+		$adminpwd = Get-Content -Path "C:\TOOLS\admin"
+		$readme = Get-Content -Path $PSScriptRoot\config\readme.txt -Raw
+		$readme = $readme -ireplace '%myFQDN%',"$myFQDN"
+		$readme -ireplace '%adminpwd%',"$adminpwd" | Set-Content -Path C:\TOOLS\readme.txt
+		# подчищаем временные файлы
+		Get-ChildItem -Path 'C:\TOOLS' *.tmp | foreach { Remove-Item -Path $_.FullName }
+		# добавляем каталогу права на запись для пользователей чтобы не было проблем при ручном запуске скриптов
+		$ACL = Get-Acl "C:\TOOLS"
+		$ACL.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule([System.Security.Principal.NTAccount]"users","fullcontrol", "ContainerInherit, ObjectInherit", "None", "Allow")))
+		Set-Acl "C:\TOOLS" $ACL
+		# помещаем ссылки на скрипт в автозапуск текущего пользователя
+		Write-Host 'Добавляю символические ссылки в автозапуск системы...' -ForegroundColor Yellow
+		New-Item -Path $env:APPDATA"\Microsoft\Windows\Start Menu\Programs\Startup\run-service.bat" -ItemType SymbolicLink -Value C:\TOOLS\run-service.bat | Out-File -Append logs\install.log
+		New-Item -Path $env:APPDATA"\Microsoft\Windows\Start Menu\Programs\Startup\run-agent.bat" -ItemType SymbolicLink -Value C:\TOOLS\run-agent.bat | Out-File -Append logs\install.log
+	}
 	Write-Host 'Установка завершена успешно!' -ForegroundColor Cyan
 	Write-Host 'Инструкции по встраиванию Application Inspector в систему сборки кода см. в файле C:\TOOLS\readme.txt.' -ForegroundColor Cyan
 	start notepad++ C:\TOOLS\readme.txt
