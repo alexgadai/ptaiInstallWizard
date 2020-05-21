@@ -1,10 +1,20 @@
 ﻿# Инсталлятор AI Enterprise и его окружения
 # Генерация сертификатов
-# версия 0.3 от 30.04.2020
+# версия 0.4 от 21.05.2020
 
-$myFQDN=(Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win32_computersystem).Domain
+Param (
+[switch]$noad
+)
+
+$myFQDN = (Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win32_computersystem).Domain
 $hostname = (Get-WmiObject win32_computersystem).DNSHostName
-$current_domain = (Get-WmiObject win32_computersystem).Domain
+if ($noad) {
+	$current_domain = $env:ComputerName
+}
+else {
+	$current_domain = (Get-WmiObject win32_computersystem).Domain
+}
+$IP = Get-NetIPConfiguration | Where-Object {$_.IPv4DefaultGateway -ne $null -and $_.NetAdapter.Status -ne "Disconnected"} | Select -ExpandProperty IPv4Address | Select -ExpandProperty IPAddress
 Set-Location -Path $PSScriptRoot
 
 # патчим конфиги
@@ -20,14 +30,19 @@ $int_client = $int_client -ireplace '(commonName\s{1,}=\s{1,})(.*)',"`$1$current
 $int_client -ireplace '(email\s{1,}=\s{1,}ptai.agent.01@)(.*)',"`$1$current_domain" | Set-Content -Path 'C:\TOOLS\certs\conf\ssl.client.conf'
 $int_server = $int_server -ireplace '(organizationName\s{1,}=\s{1,})(\".*)',"`$1`"$current_domain`""
 $int_server = $int_server -ireplace '(commonName\s{1,}=\s{1,})(.*)',"`$1$current_domain CI server #01"
-$int_server -ireplace '(subjectAltName\s{1,}=\s{1,}DNS:)(.*)',"`$1$hostname.$current_domain,DNS:localhost" | Set-Content -Path 'C:\TOOLS\certs\conf\ssl.server.conf'
+if ($noad) {
+	$int_server -ireplace '(subjectAltName\s{1,}=\s{1,}DNS:)(.*)',"`$1$current_domain,DNS:localhost,IP:$IP" | Set-Content -Path 'C:\TOOLS\certs\conf\ssl.server.conf'
+}
+else {
+	$int_server -ireplace '(subjectAltName\s{1,}=\s{1,}DNS:)(.*)',"`$1$hostname.$current_domain,DNS:localhost" | Set-Content -Path 'C:\TOOLS\certs\conf\ssl.server.conf'
+}
 $root_conf = $root_conf -ireplace '(organizationName\s{1,}=\s{1,})(\".*)',"`$1`"$current_domain`""
 $root_conf -ireplace '(commonName\s{1,}=\s{1,})(\".*)',"`$1`"$current_domain Root CA`"" | Set-Content -Path 'C:\TOOLS\certs\conf\root_ca.conf'
 
 
 $ROOT_CA_HOME = "C:\TOOLS\certs\ROOT"
-$ROOT_CA_NAME="RootCA"
-$ca_keylen=4096
+$ROOT_CA_NAME = "RootCA"
+$ca_keylen = 4096
 $CA_CONF_DIR = "C:\TOOLS\certs\conf"
 
 # зачищаем каталог в случае повторного использования скрипта
@@ -59,9 +74,11 @@ openssl ca -gencrl -batch -config $CA_CONF_DIR\root_ca.conf -out $ROOT_CA_HOME\$
 openssl crl -in $ROOT_CA_HOME\$ROOT_CA_NAME.pem.crl -outform DER -out $ROOT_CA_HOME\$ROOT_CA_NAME.der.crl
 remove-item   -path "$ROOT_CA_HOME\$ROOT_CA_NAME.pem.csr"
 
+copy $ROOT_CA_HOME\certs\$ROOT_CA_NAME.pem.crt C:\TOOLS\certs\$ROOT_CA_NAME.pem.crt
+
 # INTER
 $INT_CA_HOME = "C:\TOOLS\certs\INT"
-$INT_CA_NAME="IntermediateCA"
+$INT_CA_NAME = "IntermediateCA"
 
 # зачищаем каталог в случае повторного использования скрипта
 Remove-Item -path "$INT_CA_HOME\private" -recurse -ErrorAction Ignore
@@ -93,6 +110,8 @@ openssl x509 -outform DER -in $INT_CA_HOME\certs\$INT_CA_NAME.pem.crt -out $INT_
 openssl ca -gencrl -batch  -config $CA_CONF_DIR\int_ca.conf -out $INT_CA_HOME\$INT_CA_NAME.pem.crl
 openssl crl -in $INT_CA_HOME\$INT_CA_NAME.pem.crl -outform DER -out $INT_CA_HOME\$INT_CA_NAME.der.crl
 remove-item   -path "$INT_CA_HOME\$INT_CA_NAME.pem.csr"
+
+copy $INT_CA_HOME\certs\$INT_CA_NAME.pem.crt C:\TOOLS\certs\$INT_CA_NAME.pem.crt
 
 # ssl.server
 Remove-Item -path "$INT_CA_HOME\temp" -recurse -ErrorAction Ignore

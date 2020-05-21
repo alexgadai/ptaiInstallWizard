@@ -1,14 +1,17 @@
 ﻿#Requires -RunAsAdministrator
 
 # Инсталлятор AI Enterprise и его окружения
-# версия 0.3 от 30.04.2020
+# версия 0.4 от 21.05.2020
 
-# Если сценарии Powershell не запускаются в вашей системе из-за ограничений доменной политики, перед запуском данного скрипта выполните команду:
+# Если сценарии Powershell не запускаются в вашей системе из-за ограничений доменной политики, перед запуском данного скрипта выполните команды:
+# dir AI-Wizard.ps1 | Unblock-File
 # Set-ExecutionPolicy RemoteSigned -Scope Process
 
 Param (
 [string]$step,
-[switch]$genpass
+[switch]$genpass,
+[switch]$noad,
+[switch]$skipagent
 )
 
 # проверяем, заполнен ли AIHOME
@@ -61,10 +64,16 @@ function Check-NetFramework-Version {
 	return $passed
 }
 
+# инициализация
 Set-Location -Path $PSScriptRoot
 if (-Not (Test-Path logs)) {mkdir logs >$null}
 date | Out-File -Append logs\install.log
-$myFQDN = ((Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win32_computersystem).Domain).ToLower()
+if ($noad){
+	$myFQDN = $env:ComputerName
+} 
+else {
+	$myFQDN = ((Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win32_computersystem).Domain).ToLower()
+}
 $domain = ((Get-WmiObject win32_computersystem).Domain).ToLower()
 
 # импортируем пароли из файла
@@ -78,119 +87,138 @@ else {
 	$step = 1
 }
 
+
 # проверяем что пререквизиты установки выполнены
 if ($step -eq 1 -or $step -eq '') {
 	Write-Host 'Данный скрипт поможет вам установить Application Inspector Enterprise Edition. Доступные параметры запуска:' -ForegroundColor Yellow
 	Write-Host '-step <номер>: запуск скрипта с указанного шага' -ForegroundColor Yellow
 	Write-Host '-genpass: генерация сложных паролей' -ForegroundColor Yellow
+	Write-Host '-noad: локальная установка без Active Directory' -ForegroundColor Yellow
+	Write-Host '-skipagent: пропустить этап установки агента AI, если его планируется ставить на отдельном сервере' -ForegroundColor Yellow
 	Write-Host 'Пример запуска с параметрами:' -ForegroundColor Yellow
 	Write-Host '.\AI-Wizard.ps1 -genpass' -ForegroundColor Yellow
 	Write-Host '.\AI-Wizard.ps1 -step 5' -ForegroundColor Yellow
 	Write-Host
+	# показываем с какими параметрами запуск чтобы предотвратить опечатки
+	if ($genpass -or $noad -or $skipagent -or ($step -gt 0)) {
+		Write-Host "Запускаю инсталлятор с параметрами " -ForegroundColor Yellow -NoNewline
+		if ($step -gt 1) {Write-Host "-step $($step) " -ForegroundColor Yellow -NoNewline}
+		if ($genpass) {Write-Host "-genpass " -ForegroundColor Yellow -NoNewline}
+		if ($noad) {Write-Host "-noad " -ForegroundColor Yellow -NoNewline}
+		if ($skipagent) {Write-Host "-skipagent" -ForegroundColor Yellow}
+	}
+	else {
+		Write-Host "Запускаю инсталлятор без параметров..." -ForegroundColor Yellow
+	}
+	Write-Host	
 	Write-Host '---ШАГ 1---' -ForegroundColor Green
 	Write-Host 'Проверяю пререквизиты установки...' -ForegroundColor Yellow
-	# проверяем что машина в домене
-	if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain) {
-		# проверяем что пользователь доменный
-		if ($env:ComputerName -ne $env:UserDomain) {
-			# проверяем переменную %HOMEDRIVE%
-			if ($env:HOMEDRIVE -ne "C:") {
-				Write-Host 'Предупреждение: глобальная переменная %HOMEDRIVE% установлена не на диск C:, текущее значение $($env:HOMEDRIVE)' -ForegroundColor Cyan
-			}
-			# проверяем версию powershell
-			$psver = Get-Host | Select-Object Version
-			$psver.version | Out-File -Append logs\install.log
-			if ($psver.version.Major -ge 5) {
-				# проверяем версию NetFramework
-				if (Check-NetFramework-Version) {
-					Write-Host 'Проверки пройдены успешно.' -ForegroundColor Yellow
-					Get-AIHome
-					# копируем утилиты для установки
-					if (-Not (Test-Path C:\TOOLS)) {
-						# проверяем java и openssl
-						Write-Host 'Создаю каталог C:\TOOLS и копирую туда необходимые компоненты для установки...' -ForegroundColor Yellow
-						mkdir -p C:\TOOLS\BOOT-INF\classes\liquibase | Out-File -Append logs\install.log
-						mkdir -p C:\TOOLS\certs\INT | Out-File -Append logs\install.log
-						mkdir -p C:\TOOLS\certs\ROOT | Out-File -Append logs\install.log
-						mkdir -p C:\TOOLS\certs\conf | Out-File -Append logs\install.log
-						mkdir -p C:\TOOLS\certs\src | Out-File -Append logs\install.log
-						if ($env:Path -match 'jdk|java') {
-							Write-Host 'Предупреждение: в Path обнаружена Java.' -ForegroundColor Cyan
-						}
-						xcopy jdk1.8 C:\TOOLS\jdk1.8\ /E /Y | Out-File -Append logs\install.log
-						if ($env:Path -match 'openssl') {
-							Write-Host 'Предупреждение: в Path обнаружен Openssl.' -ForegroundColor Cyan
-							# обновляем Path
-							[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\TOOLS\jdk1.8\bin", "Machine")
-						}
-						else {
-							xcopy openssl C:\TOOLS\openssl\ /E /Y | Out-File -Append logs\install.log
-							[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\TOOLS\openssl\bin;C:\TOOLS\jdk1.8\bin", "Machine")
-						}
-						# обновляем знания текущей сессии Powershell о Path
-						$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-						copy config\root_ca.conf C:\TOOLS\certs\conf\root_ca.conf
-						copy config\int_ca.conf C:\TOOLS\certs\conf\int_ca.conf
-						copy config\ssl.server.conf C:\TOOLS\certs\conf\ssl.server.conf
-						copy config\ssl.client.conf C:\TOOLS\certs\conf\ssl.client.conf
-						copy ptai-integration-service-0.1-spring-boot.jar C:\TOOLS\ptai-integration-service-0.1-spring-boot.jar
-						copy ptai-cli-plugin-0.1-jar-with-dependencies.jar C:\TOOLS\ptai-cli-plugin-0.1.jar
-						copy agent.jar C:\TOOLS\agent.jar
-						copy plugins\ptai-jenkins-plugin.hpi C:\TOOLS\ptai-jenkins-plugin.hpi
-						copy config\run-service.bat C:\TOOLS\run-service.bat
-						copy generateCertificates.ps1 C:\TOOLS\certs\src\generateCertificates.ps1
-						# выключаем окно первого запуска IE чтобы работал Invoke-WebRequest
-						Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Internet Explorer\Main" -Name "DisableFirstRunCustomize" -Value 2
-					}
-					# создаём пароли для установки
-					if (-Not [System.IO.File]::Exists("C:\TOOLS\passwords.xml")) {
-						# генерируем безопасные пароли
-						if ($genpass) {
-							Write-Host 'Генерирую безопасные пароли...' -ForegroundColor Yellow
-							Add-Type -AssemblyName System.Web
-							$length = 12
-							$nonAlphaChars = 2
-							$passwords = @{
-								# временный костыль: убираем неугодные символы
-								'serverCertificate'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars) -replace '\^|\||&|<|>|-',"!";
-								'clientCertificate'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars) -replace '\^|\||&|<|>|-',"!";
-								'javaCacerts'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
-								'adminJenkins'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
-								'svc_ptaiJenkins'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
-								'integrationServiceDB'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
-							}
-						}
-						# или берём простые
-						else {
-							$passwords = @{
-								'serverCertificate'='P@ssw0rd';
-								'clientCertificate'='P@ssw0rd';
-								'javaCacerts'='changeit';
-								'adminJenkins'='P@ssw0rd';
-								'svc_ptaiJenkins'='P@ssw0rd';
-								'integrationServiceDB'='P@ssw0rd';
-							}
-						}
-						Export-Clixml -Path "C:\TOOLS\passwords.xml" -InputObject $passwords							
-					}
-					$step = 2
-				}
-			}
-			else {
-				Write-Host 'Ошибка: пожалуйста, обновите версию Powershell до 5-ой или выше, а затем перезапустите скрипт.' -ForegroundColor Red
-				Write-Host 'Запускаю установщик обновления Powershell...' -ForegroundColor Yellow
-				start powershell_5-1_Win8.1AndW2K12R2-KB3191564-x64.msu
-				Check-NetFramework-Version
-				Exit
-			}
+	if (-Not $noad) {
+		# проверяем что машина в домене
+		if (-Not (Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain) {
+			Write-Host 'Ошибка: пожалуйста, введите компьютер в домен.' -ForegroundColor Red
+			Exit
 		}
-		else {
+		# проверяем что пользователь доменный
+		if ($env:ComputerName -eq $env:UserDomain) {
 			Write-Host 'Ошибка: пожалуйста, войдите под доменной учётной записью с правами локального администратора.' -ForegroundColor Red
 			Exit
 		}
 	}
+	# проверяем переменную %HOMEDRIVE%
+	if ($env:HOMEDRIVE -ne "C:") {
+		Write-Host "Предупреждение: глобальная переменная %HOMEDRIVE% установлена не на диск C:, текущее значение $($env:HOMEDRIVE)" -ForegroundColor Cyan
+	}
+	# проверяем версию powershell
+	$psver = Get-Host | Select-Object Version
+	$psver.version | Out-File -Append logs\install.log
+	if ($psver.version.Major -ge 5) {
+		# проверяем версию NetFramework
+		if (Check-NetFramework-Version) {
+			Write-Host 'Проверки пройдены успешно.' -ForegroundColor Yellow
+			Get-AIHome
+			if (-Not (Test-Path C:\TOOLS)) {
+				Write-Host 'Создаю каталог C:\TOOLS и копирую туда необходимые компоненты для установки...' -ForegroundColor Yellow
+				# разблокируем исполняемые файлы и скрипты
+				Get-ChildItem -Recurse *.exe | Unblock-File
+				Get-ChildItem -Recurse *.msi | Unblock-File
+				Get-ChildItem -Recurse *.ps1 | Unblock-File
+				Get-ChildItem -Recurse *.bat | Unblock-File
+				# копируем утилиты для установки
+				mkdir -p C:\TOOLS\BOOT-INF\classes\liquibase | Out-File -Append logs\install.log
+				mkdir -p C:\TOOLS\certs\INT | Out-File -Append logs\install.log
+				mkdir -p C:\TOOLS\certs\ROOT | Out-File -Append logs\install.log
+				mkdir -p C:\TOOLS\certs\conf | Out-File -Append logs\install.log
+				mkdir -p C:\TOOLS\certs\src | Out-File -Append logs\install.log
+				# проверяем java и openssl
+				if ($env:Path -match 'jdk|java') {
+					Write-Host 'Предупреждение: в Path обнаружена Java.' -ForegroundColor Cyan
+				}
+				xcopy jdk1.8 C:\TOOLS\jdk1.8\ /E /Y | Out-File -Append logs\install.log
+				if ($env:Path -match 'openssl') {
+					Write-Host 'Предупреждение: в Path обнаружен Openssl.' -ForegroundColor Cyan
+					# обновляем Path и не копируем openssl на машину
+					[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\TOOLS\jdk1.8\bin", "Machine")
+				}
+				else {
+					xcopy openssl C:\TOOLS\openssl\ /E /Y | Out-File -Append logs\install.log
+					[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\TOOLS\openssl\bin;C:\TOOLS\jdk1.8\bin", "Machine")
+				}
+				# обновляем знания текущей сессии Powershell о Path
+				$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+				copy config\root_ca.conf C:\TOOLS\certs\conf\root_ca.conf
+				copy config\int_ca.conf C:\TOOLS\certs\conf\int_ca.conf
+				copy config\ssl.server.conf C:\TOOLS\certs\conf\ssl.server.conf
+				copy config\ssl.client.conf C:\TOOLS\certs\conf\ssl.client.conf
+				copy ptai-integration-service-0.1-spring-boot.jar C:\TOOLS\ptai-integration-service-0.1-spring-boot.jar
+				copy ptai-cli-plugin-0.1-jar-with-dependencies.jar C:\TOOLS\ptai-cli-plugin.jar
+				copy agent.jar C:\TOOLS\agent.jar
+				copy plugins\ptai-jenkins-plugin.hpi C:\TOOLS\ptai-jenkins-plugin.hpi
+				copy config\run-service.bat C:\TOOLS\run-service.bat
+				copy generateCertificates.ps1 C:\TOOLS\certs\src\generateCertificates.ps1
+				# выключаем окно первого запуска IE чтобы работал Invoke-WebRequest
+				Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Internet Explorer\Main" -Name "DisableFirstRunCustomize" -Value 2
+			}
+			# создаём пароли для установки
+			if (-Not [System.IO.File]::Exists("C:\TOOLS\passwords.xml")) {
+				# генерируем безопасные пароли
+				if ($genpass) {
+					Write-Host 'Генерирую безопасные пароли...' -ForegroundColor Yellow
+					Add-Type -AssemblyName System.Web
+					$length = 12
+					$nonAlphaChars = 2
+					$passwords = @{
+						# временный костыль: убираем неугодные символы
+						'serverCertificate'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars) -replace '\^|\||&|<|>|-',"!";
+						'clientCertificate'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars) -replace '\^|\||&|<|>|-',"!";
+						'javaCacerts'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+						'adminJenkins'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+						'svc_ptaiJenkins'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+						'integrationServiceDB'=[System.Web.Security.Membership]::GeneratePassword($length, $nonAlphaChars);
+					}
+				}
+				# или берём простые
+				else {
+					$passwords = @{
+						'serverCertificate'='P@ssw0rd';
+						'clientCertificate'='P@ssw0rd';
+						'javaCacerts'='changeit';
+						'adminJenkins'='P@ssw0rd';
+						'svc_ptaiJenkins'='P@ssw0rd';
+						'integrationServiceDB'='P@ssw0rd';
+					}
+				}
+				Export-Clixml -Path "C:\TOOLS\passwords.xml" -InputObject $passwords
+				$passwords | ConvertTo-JSON | Set-Content -Path "C:\TOOLS\passwords.txt"
+			}
+		}
+		$step = 2		
+	}
 	else {
-		Write-Host 'Ошибка: пожалуйста, введите компьютер в домен.' -ForegroundColor Red
+		Write-Host 'Ошибка: пожалуйста, обновите версию Powershell до 5-ой или выше, а затем перезапустите скрипт.' -ForegroundColor Red
+		Write-Host 'Запускаю установщик обновления Powershell...' -ForegroundColor Yellow
+		start powershell_5-1_Win8.1AndW2K12R2-KB3191564-x64.msu
+		Check-NetFramework-Version
 		Exit
 	}
 }
@@ -236,7 +264,12 @@ if ($step -eq 3) {
 			}
 		}
 		
-		Invoke-expression -Command C:\TOOLS\certs\src\generateCertificates.ps1 2>&1 | Out-File -Append logs\install.log
+		if ($noad) {
+			Invoke-expression -Command "C:\TOOLS\certs\src\generateCertificates.ps1 -noad" -ErrorAction Stop 2>&1 | Out-File -Append logs\install.log
+		}
+		else {
+			Invoke-expression -Command C:\TOOLS\certs\src\generateCertificates.ps1 -ErrorAction Stop 2>&1 | Out-File -Append logs\install.log
+		}
 		Set-Location -Path $PSScriptRoot
 		# проверяем что сертификаты сгенерировались
 		if ([System.IO.File]::Exists("C:\TOOLS\certs\server-private.jks")) {
@@ -246,7 +279,7 @@ if ($step -eq 3) {
 				Write-Host 'Меняю пароль на хранилище сертификатов Java...' -ForegroundColor Yellow
 				keytool -storepasswd -new "$($passwords['javaCacerts'])" -storepass changeit -keystore "C:\TOOLS\jdk1.8\jre\lib\security\cacerts" 2>&1 | Out-File -Append logs\install.log
 			}
-			# добавляем серты в cacerts java
+			# добавляем сертификаты в cacerts java
 			Write-Host 'Добавляю сертификаты в хранилище сертификатов Java...' -ForegroundColor Yellow
 			keytool -importkeystore -noprompt -srckeystore "C:/TOOLS/certs/server-private.jks" -srcstorepass "$($passwords['serverCertificate'])" -destkeystore "C:\TOOLS\jdk1.8\jre\lib\security\cacerts" -deststoretype JKS -deststorepass "$($passwords['javaCacerts'])" 2>&1 | Out-File -Append logs\install.log
 			keytool -importkeystore -noprompt -srckeystore "C:/TOOLS/certs/ssl.client.brief.pfx" -srcstorepass "$($passwords['clientCertificate'])" -srcstoretype pkcs12 -destkeystore "C:\TOOLS\jdk1.8\jre\lib\security\cacerts" -deststoretype JKS -deststorepass "$($passwords['javaCacerts'])" 2>&1 | Out-File -Append logs\install.log
@@ -268,25 +301,30 @@ if ($step -eq 4) {
 	# проверяем если AI Server уже установлен
 	if (-Not [System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Application Inspector Server\Services\gateway\AIE.Gateway.exe")) {
 		Get-AIHome
-		# проверяем наличие пользователя в домене
-		Write-Host "Проверяю связь с домен контроллером..." -ForegroundColor Yellow
-		do {
-			if ($matches -ne $null) {
-				$domain = $matches[0]
+		if (-Not $noad) {
+			# проверяем наличие пользователя в домене
+			Write-Host "Проверяю связь с домен контроллером..." -ForegroundColor Yellow
+			do {
+				if ($matches -ne $null) {
+					$domain = $matches[0]
+				}
+				if ((.\ADTool.exe $domain $env:UserName) -like "Success, all users were found") {
+					[bool] $domainfound = 1
+					break
+				}
 			}
-			if ((.\ADTool.exe $domain $env:UserName) -like "Success, all users were found") {
-				[bool] $domainfound = 1
-				break
-			}
+			# если не нашли в текущем домене, сокращаем название домена до следующей точки и пробуем снова
+			while ($domain -match '(?<=\.).*')
 		}
-		# если не нашли в текущем домене, сокращаем название домена до следующей точки и пробуем снова
-		while ($domain -match '(?<=\.).*')
 		
 		Write-Host 'Пожалуйста, следуйте указаниям установщика AI Server.' -ForegroundColor Yellow
 		Write-Host 'Данные для установки: ' -ForegroundColor Yellow
 		# если домен, требуемый для инсталлятора, отличается от текущего, укажем на это пользователю
 		if ($domainfound -and $domain -ne ((Get-WmiObject win32_computersystem).Domain).ToLower()) {
 			Write-Host "Предупреждение: при установке укажите, пожалуйста, домен в таком виде: $($domain)" -ForegroundColor Cyan
+		}
+		elseif ($noad) {
+			Write-Host "Домен: $($env:ComputerName)" -ForegroundColor Yellow
 		}
 		else {
 			Write-Host "Домен: "((Get-WmiObject win32_computersystem).Domain).ToLower() -ForegroundColor Yellow
@@ -390,18 +428,23 @@ if ($step -eq 5) {
 		Write-Host 'Этот шаг уже был выполнен, переходим к следующему.' -ForegroundColor Yellow
 	}
 	else {
-		Get-AIHome
-		Write-Host 'Пожалуйста, следуйте указаниям установщика AI Agent.' -ForegroundColor Yellow
-		Write-Host 'Данные для установки: ' -ForegroundColor Yellow
-		Write-Host 'Расположение сертификата: C:\TOOLS\certs\INT\out\01\ssl.client.brief.pfx' -ForegroundColor Yellow
-		Write-Host "Пароль от сертификата: $($passwords['clientCertificate'])" -ForegroundColor Yellow
-		Write-Host "Адрес сервера: https://$($myFQDN)" -ForegroundColor Yellow
-		$proc = Start-Process (Get-Current-Version-Path "$($global:AIHOME)\aic" "AIE.Agent*.exe") -passthru
-		Wait-Process $proc.Id
-		# проверяем что AI Agent установлен
-		if (-Not [System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Application Inspector Agent\aic.exe")) {
-			Write-Host 'Ошибка: AI Agent не установлен. Пожалуйста, выполните установку AI Agent и продолжите установку с шага 6.' -ForegroundColor Red
-			Exit
+		if ($skipagent) {
+			Write-Host 'Пропускаю этап установки агента, переходим к следующему шагу.' -ForegroundColor Yellow
+		}
+		else {
+			Get-AIHome
+			Write-Host 'Пожалуйста, следуйте указаниям установщика AI Agent.' -ForegroundColor Yellow
+			Write-Host 'Данные для установки: ' -ForegroundColor Yellow
+			Write-Host 'Расположение сертификата: C:\TOOLS\certs\INT\out\01\ssl.client.brief.pfx' -ForegroundColor Yellow
+			Write-Host "Пароль от сертификата: $($passwords['clientCertificate'])" -ForegroundColor Yellow
+			Write-Host "Адрес сервера: https://$($myFQDN)" -ForegroundColor Yellow
+			$proc = Start-Process (Get-Current-Version-Path "$($global:AIHOME)\aic" "AIE.Agent*.exe") -passthru
+			Wait-Process $proc.Id
+			# проверяем что AI Agent установлен
+			if (-Not [System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Application Inspector Agent\aic.exe")) {
+				Write-Host 'Ошибка: AI Agent не установлен. Пожалуйста, выполните установку AI Agent и продолжите установку с шага 6.' -ForegroundColor Red
+				Exit
+			}
 		}
 	}
 	$step = 6
@@ -483,7 +526,12 @@ if ($step -eq 8) {
 		Write-Host 'Настраиваю Jenkins...' -ForegroundColor Yellow 
 		Write-Host 'Копирую плагины...' -ForegroundColor Yellow
 		xcopy plugins "C:\Program Files (x86)\Jenkins\plugins\" /E /Y | Out-File -Append logs\install.log
-		Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 1" -ErrorAction Stop
+		if ($noad) {
+			Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 1 -noad" -ErrorAction Stop
+		}
+		else {
+			Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 1" -ErrorAction Stop
+		}
 		if (-Not [System.IO.File]::Exists("C:\TOOLS\BOOT-INF\classes\application.yml")) {
 			Write-Host 'Ошибка: токен для доступа к Jenkins не сформирован. Пожалуйста, устраните ошибку и перезапустите установку с шага 8.' -ForegroundColor Red
 			Exit
@@ -568,7 +616,12 @@ if ($step -eq 10) {
 	}
 	else {
 		Write-Host 'Продолжаю настройку Jenkins...' -ForegroundColor Yellow 
-		Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 2" -ErrorAction Stop
+		if ($noad) {
+			Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 2 -noad" -ErrorAction Stop
+		}
+		else {
+			Invoke-expression -Command "$($PSScriptRoot)\configureJenkins.ps1 -step 2" -ErrorAction Stop
+		}
 		if (-Not [System.IO.File]::Exists("C:\TOOLS\run-agent.bat")) {
 			Write-Host 'Ошибка: данные для запуска агента Jenkins не найдены. Пожалуйста, устраните ошибку и перезапустите установку с шага 10.' -ForegroundColor Red
 			Exit
@@ -578,13 +631,27 @@ if ($step -eq 10) {
 		# заменяем ключевые значения в readme.txt
 		$adminpwd = Get-Content -Path "C:\TOOLS\admin"
 		$readme = Get-Content -Path $PSScriptRoot\config\readme.txt -Raw
-		$readme = $readme -ireplace '%myFQDN%',"$myFQDN"
+		if ($noad) {
+			$IP = Get-NetIPConfiguration | Where-Object {$_.IPv4DefaultGateway -ne $null -and $_.NetAdapter.Status -ne "Disconnected"} | Select -ExpandProperty IPv4Address | Select -ExpandProperty IPAddress
+			$readme = $readme -ireplace '%myFQDN%',"$IP"
+		}
+		else {
+			$readme = $readme -ireplace '%myFQDN%',"$myFQDN"
+		}
 		$readme -ireplace '%adminpwd%',"$adminpwd" | Set-Content -Path C:\TOOLS\readme.txt
 		# подчищаем временные файлы
 		Get-ChildItem -Path 'C:\TOOLS' *.tmp | foreach { Remove-Item -Path $_.FullName }
 		# добавляем каталогу права на запись для пользователей чтобы не было проблем при ручном запуске скриптов
 		$ACL = Get-Acl "C:\TOOLS"
-		$ACL.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule([System.Security.Principal.NTAccount]"users","fullcontrol", "ContainerInherit, ObjectInherit", "None", "Allow")))
+		try {
+			# для английской windows
+			$ACL.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule([System.Security.Principal.NTAccount]"users","fullcontrol", "ContainerInherit, ObjectInherit", "None", "Allow")))
+		}
+		catch {
+			# для русской windows
+			$_ | Out-File -Append logs\install.log
+			$ACL.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule([System.Security.Principal.NTAccount]"Пользователи","fullcontrol", "ContainerInherit, ObjectInherit", "None", "Allow")))		
+		}
 		Set-Acl "C:\TOOLS" $ACL
 		# помещаем ссылки на скрипт в автозапуск текущего пользователя
 		Write-Host 'Добавляю символические ссылки в автозапуск системы...' -ForegroundColor Yellow

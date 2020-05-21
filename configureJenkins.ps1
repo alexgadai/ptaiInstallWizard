@@ -1,9 +1,10 @@
 ﻿# Инсталлятор AI Enterprise и его окружения
 # Настройка Jenkins
-# версия 0.3 от 30.04.2020
+# версия 0.4 от 21.05.2020
 
 Param (
-[string]$step
+[string]$step,
+[switch]$noad
 )
 
 # установить заголовок для аутентификации в Jenkins
@@ -72,9 +73,16 @@ function Start-Jenkins($url, $header) {
 	while ($notready)
 }
 
-Set-Location -Path $PSScriptRoot
-$myFQDN=((Get-WmiObject win32_computersystem).DNSHostName+"."+(Get-WmiObject win32_computersystem).Domain).ToLower()
+# указываем имя компьютера либо собираем FQDN для имени хоста
+if ($noad) {
+	$myFQDN = $env:ComputerName
+}
+else {
+	$myFQDN = ((Get-WmiObject win32_computersystem).DNSHostName + "." + (Get-WmiObject win32_computersystem).Domain).ToLower()
+}
+# устанавливаем тип TLS для Invoke-WebRequest
 [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+Set-Location -Path $PSScriptRoot
 
 if ($step -eq 1 -or $step -eq '') {
 	# Установка Jenkins
@@ -91,7 +99,7 @@ if ($step -eq 1 -or $step -eq '') {
 		}
 		catch {
 			Write-Host "Ожидание старта Jenkins..." -ForegroundColor Yellow
-			$_ | Out-File -Append logs\install.log			
+			$_ | Out-File -Append logs\install.log
 			Start-Sleep 3
 		}
 		$timer++
@@ -122,12 +130,21 @@ if ($step -eq 1 -or $step -eq '') {
 	$defaultpass = Get-Content -Path "C:\Program Files (x86)\Jenkins\secrets\initialAdminPassword" -Raw
 	Set-Auth-Header "admin" $defaultpass.Trim()
 	# меняем для юзера admin
-	Invoke-WebRequest -Uri "https://$($myFQDN):8080/user/admin/configSubmit" `
-	-Method "POST" `
-	-Headers $global:Headers `
-	-ContentType "application/x-www-form-urlencoded" `
-	-Body "_.fullName=admin&_.description=&_.primaryViewName=&user.password=$($pass)&user.password2=$($pass)&_.authorizedKeys=&insensitiveSearch=on&core%3Aapply=&json=%7B%22fullName%22%3A+%22admin%22%2C+%22description%22%3A+%22%22%2C+%22userProperty2%22%3A+%7B%22primaryViewName%22%3A+%22%22%7D%2C+%22userProperty4%22%3A+%7B%22password%22%3A+%22$($pass)%22%2C+%22%24redact%22%3A+%5B%22password%22%2C+%22password2%22%5D%2C+%22password2%22%3A+%22$($pass)%22%7D%2C+%22userProperty5%22%3A+%7B%22authorizedKeys%22%3A+%22%22%7D%2C+%22userProperty7%22%3A+%7B%22insensitiveSearch%22%3A+true%7D%2C+%22core%3Aapply%22%3A+%22%22%7D&Submit=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C" | Out-File -Append logs\install.log
-	
+	try {
+		Invoke-WebRequest -Uri "https://$($myFQDN):8080/user/admin/configSubmit" `
+		-Method "POST" `
+		-Headers $global:Headers `
+		-ContentType "application/x-www-form-urlencoded" `
+		-Body "_.fullName=admin&_.description=&_.primaryViewName=&providerId=default&_.authorizedKeys=&insensitiveSearch=on&_.timeZoneName=&email.address=&user.password=$($pass)&user.password2=$($pass)&core%3Aapply=&json=%7B%22fullName%22%3A+%22admin%22%2C+%22description%22%3A+%22%22%2C+%22userProperty3%22%3A+%7B%22primaryViewName%22%3A+%22%22%7D%2C+%22userProperty4%22%3A+%7B%22providerId%22%3A+%22default%22%7D%2C+%22userProperty6%22%3A+%7B%22authorizedKeys%22%3A+%22%22%7D%2C+%22userProperty8%22%3A+%7B%22insensitiveSearch%22%3A+true%7D%2C+%22userProperty9%22%3A+%7B%22timeZoneName%22%3A+%22%22%7D%2C+%22userProperty10%22%3A+%7B%22address%22%3A+%22%22%7D%2C+%22userProperty11%22%3A+%7B%22password%22%3A+%22$($pass)%22%2C+%22%24redact%22%3A+%5B%22password%22%2C+%22password2%22%5D%2C+%22password2%22%3A+%22$($pass)%22%7D%2C+%22core%3Aapply%22%3A+%22%22%7D&Submit=Save" | Out-File -Append logs\install.log
+	}
+	catch {
+		Write-Host 'Пробую ещё раз...' -ForegroundColor Yellow
+		Invoke-WebRequest -Uri "https://$($myFQDN):8080/user/admin/configSubmit" `
+		-Method "POST" `
+		-Headers $global:Headers `
+		-ContentType "application/x-www-form-urlencoded" `
+		-Body "_.fullName=admin&_.description=&email.address=&_.primaryViewName=&providerId=default&user.password=$($pass)&user.password2=$($pass)&_.authorizedKeys=&insensitiveSearch=on&_.timeZoneName=&core%3Aapply=&json=%7B%22fullName%22%3A+%22admin%22%2C+%22description%22%3A+%22%22%2C+%22userProperty2%22%3A+%7B%22address%22%3A+%22%22%7D%2C+%22userProperty4%22%3A+%7B%22primaryViewName%22%3A+%22%22%7D%2C+%22userProperty5%22%3A+%7B%22providerId%22%3A+%22default%22%7D%2C+%22userProperty7%22%3A+%7B%22password%22%3A+%22$($pass)%22%2C+%22%24redact%22%3A+%5B%22password%22%2C+%22password2%22%5D%2C+%22password2%22%3A+%22$($pass)%22%7D%2C+%22userProperty8%22%3A+%7B%22authorizedKeys%22%3A+%22%22%7D%2C+%22userProperty10%22%3A+%7B%22insensitiveSearch%22%3A+true%7D%2C+%22userProperty11%22%3A+%7B%22timeZoneName%22%3A+%22%22%7D%2C+%22core%3Aapply%22%3A+%22%22%7D&Submit=Save" | Out-File -Append logs\install.log
+	}
 	# создаём пользователя svc_ptai
 	Write-Host 'Завожу технического пользователя для AI...' -ForegroundColor Yellow
 	$pass = [System.Web.HTTPUtility]::UrlEncode($passwords['svc_ptaiJenkins'])

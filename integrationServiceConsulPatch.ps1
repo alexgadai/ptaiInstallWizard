@@ -6,7 +6,7 @@ if ([System.IO.File]::Exists("C:\Program Files (x86)\Positive Technologies\Appli
 	Set-Location -Path $PSScriptRoot
 	# извлекаем мастер токен консула
 	$AIconfig = Get-Content -Path "C:\Program Files (x86)\Positive Technologies\Application Inspector Server\config.json" | ConvertFrom-Json
-	$ConsulToken=$AIconfig.Config.ConsulMasterToken
+	$ConsulToken = $AIconfig.Config.ConsulMasterToken
 	
 	# добавляем политику ServiceRegister
 	$ServiceRegister = Invoke-WebRequest -Uri "http://localhost:8500/v1/acl/policy?dc=dc1" -Method "PUT" -Headers @{"X-Consul-Token"="$($ConsulToken)"} -ContentType "application/json; charset=UTF-8" -Body "{`"Name`":`"devel-AIE-integrationService-ServiceRegister`",`"Description`":`"`",`"Rules`":`"service_prefix \`"integrationService\`" {\n    policy = \`"write\`" intentions = \`"write\`"\n}`"}" | ConvertFrom-Json
