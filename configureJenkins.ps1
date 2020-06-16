@@ -47,7 +47,7 @@ function Start-Jenkins($url, $header) {
 	# проверяем состояние службы Jenkins
 	$JenkinsServiceStatus = Get-Service Jenkins -ErrorAction Stop
 	if ($JenkinsServiceStatus.Status -ne 'Running') {
-		Write-Host 'Ошибка: Служба Jenkins не запущена. Логи скопированы в папку logs. Пожалуйста устраните ошибку и перезапустите установку с шага 8.' -ForegroundColor Red
+		Write-Host 'Ошибка: Служба Jenkins не запущена. Логи скопированы в папку logs. Пожалуйста, устраните ошибку и перезапустите установку с шага 8.' -ForegroundColor Red
 		copy "C:\Program Files (x86)\Jenkins\jenkins.err.log" logs\jenkins.err.log | Out-File -Append logs\install.log	
 		Exit
 	}

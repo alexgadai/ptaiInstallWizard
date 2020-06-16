@@ -17,7 +17,7 @@ Param (
 # проверяем, заполнен ли AIHOME
 function Get-AIHome {
 	if ($global:AIHOME -eq $null) {
-		Write-Host 'Пожалуйста, укажите путь до каталога с дистрибутивами AI Enterprise (где находятся каталоги aiv, aie, aic) без \ в конце: ' -ForegroundColor Yellow -NoNewline
+		Write-Host 'Пожалуйста, укажите полный путь до каталога с дистрибутивами AI Enterprise (где находятся каталоги aiv, aie, aic) без \ в конце: ' -ForegroundColor Yellow -NoNewline
 		$global:AIHOME = Read-Host | ForEach-Object {$_.Trim()}
 		# проверяем есть ли в указанном каталоге дистрибутив AI
 		Get-Current-Version-Path "$($global:AIHOME)\aiv" "AIE.Viewer*.exe">$null
@@ -40,7 +40,7 @@ function Get-Browser-Path {
 function Get-Current-Version-Path([String]$path, [String]$mask) {
 	$filename = $path+'\'+(Get-ChildItem "$($path)\$($mask)").Name
 	if (-Not [System.IO.File]::Exists($filename)) {
-		Write-Host "Ошибка: файл $($mask) не найден в каталоге $($path)." -ForegroundColor Red
+		Write-Host "Ошибка: файл $($mask) не найден в каталоге $($path). Возможно, вы указали относительный путь вместо полного пути." -ForegroundColor Red
 		Exit
 	}
 	return $filename
@@ -87,6 +87,18 @@ else {
 	$step = 1
 }
 
+# показываем с какими параметрами запуск чтобы предотвратить опечатки
+if ($genpass -or $noad -or $skipagent -or ($step -gt 0)) {
+	Write-Host "Запускаю инсталлятор с параметрами" -ForegroundColor Yellow -NoNewline
+	if ($step -gt 1) {Write-Host " -step $($step)" -ForegroundColor Yellow -NoNewline}
+	if ($genpass) {Write-Host " -genpass" -ForegroundColor Yellow -NoNewline}
+	if ($noad) {Write-Host " -noad" -ForegroundColor Yellow -NoNewline}
+	if ($skipagent) {Write-Host " -skipagent" -ForegroundColor Yellow}
+}
+else {
+	Write-Host "Запускаю инсталлятор без параметров..." -ForegroundColor Yellow
+}
+Write-Host
 
 # проверяем что пререквизиты установки выполнены
 if ($step -eq 1 -or $step -eq '') {
@@ -98,18 +110,6 @@ if ($step -eq 1 -or $step -eq '') {
 	Write-Host 'Пример запуска с параметрами:' -ForegroundColor Yellow
 	Write-Host '.\AI-Wizard.ps1 -genpass' -ForegroundColor Yellow
 	Write-Host '.\AI-Wizard.ps1 -step 5' -ForegroundColor Yellow
-	Write-Host
-	# показываем с какими параметрами запуск чтобы предотвратить опечатки
-	if ($genpass -or $noad -or $skipagent -or ($step -gt 0)) {
-		Write-Host "Запускаю инсталлятор с параметрами " -ForegroundColor Yellow -NoNewline
-		if ($step -gt 1) {Write-Host "-step $($step) " -ForegroundColor Yellow -NoNewline}
-		if ($genpass) {Write-Host "-genpass " -ForegroundColor Yellow -NoNewline}
-		if ($noad) {Write-Host "-noad " -ForegroundColor Yellow -NoNewline}
-		if ($skipagent) {Write-Host "-skipagent" -ForegroundColor Yellow}
-	}
-	else {
-		Write-Host "Запускаю инсталлятор без параметров..." -ForegroundColor Yellow
-	}
 	Write-Host	
 	Write-Host '---ШАГ 1---' -ForegroundColor Green
 	Write-Host 'Проверяю пререквизиты установки...' -ForegroundColor Yellow
@@ -319,6 +319,7 @@ if ($step -eq 4) {
 		
 		Write-Host 'Пожалуйста, следуйте указаниям установщика AI Server.' -ForegroundColor Yellow
 		Write-Host 'Данные для установки: ' -ForegroundColor Yellow
+		Write-Host 'Важно: смените имя пользователя сервиса очередей с guest на любое другое' -ForegroundColor Yellow
 		# если домен, требуемый для инсталлятора, отличается от текущего, укажем на это пользователю
 		if ($domainfound -and $domain -ne ((Get-WmiObject win32_computersystem).Domain).ToLower()) {
 			Write-Host "Предупреждение: при установке укажите, пожалуйста, домен в таком виде: $($domain)" -ForegroundColor Cyan
@@ -374,7 +375,7 @@ if ($step -eq 4) {
 	catch {
 		Write-Host 'Ошибка проверки служб: '$_ -ForegroundColor Red
 		Write-Host 'Логи скопированы в папку logs. Пожалуйста, устраните ошибку и продолжите установку с шага 5.' -ForegroundColor Red
-		xcopy "C:\ProgramData\Application Inspector\Logs\deploy" logs\deploy\ /E /Y | Out-File -Append logs\install.log	
+		xcopy "C:\ProgramData\Application Inspector\Logs\deploy" logs\deploy\ /E /Y | Out-File -Append logs\install.log
 		Exit
 	}
 	# проверяем статус служб
@@ -403,12 +404,14 @@ if ($step -eq 4) {
 				"AI.Enterprise.UpdateServer" 			{ xcopy "C:\ProgramData\Application Inspector\Logs\updateServer" logs\updateServer\ /E /Y | Out-File -Append logs\install.log }
 				"Consul" 								{ xcopy "C:\ProgramData\Application Inspector\Logs\consul" logs\consul\ /E /Y | Out-File -Append logs\install.log;
 														xcopy "C:\ProgramData\Application Inspector\Logs\consulTool" logs\consulTool\ /E /Y | Out-File -Append logs\install.log }
-				"RabbitMQ" 								{ xcopy $env:APPDATA\RabbitMQ\log logs\RabbitMQ\ /E /Y | Out-File -Append logs\install.log }
+				"RabbitMQ" 								{ "RabbitMQ is down" | Out-File -Append logs\install.log }
 				"PostgreSQL" 							{ mkdir logs\PostgreSQL; echo $null > logs\PostgreSQL\error.txt }
 			}
 		}
-		# также проверяем юзеров в кролике т.к. часто проблемы связаны с ним
+		# также копируем те логи где чаще всего бывают проблемы
 		& "C:\Program Files\RabbitMQ Server\rabbitmq_server-3.7.8\sbin\rabbitmqctl.bat" list_users 2>&1 | Out-File -Append "logs\install.log"
+		xcopy "C:\ProgramData\Application Inspector\Logs\deploy" logs\deploy\ /E /Y | Out-File -Append logs\install.log
+		xcopy $env:APPDATA\RabbitMQ\log logs\RabbitMQ\ /E /Y | Out-File -Append logs\install.log
 		Exit
 	}
 	$AIViewerState = Get-Process ApplicationInspector -ErrorAction SilentlyContinue

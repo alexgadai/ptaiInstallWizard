@@ -31,11 +31,8 @@
 		  -file - путь к файлу сертификата для импорта
 5. Откройте настройки сборки вашего проекта в CI-системе и добавьте шаг "вызов командной строки"
 6. Подготовьте строку запуска AI по примеру:
-	java -jar /путь/к/плагину/ptai-cli-plugin.jar slim-ui-ast --input="WorkspaceПроекта" --project="ИмяПроектаИзAIViewer" --node=PTAI --user=admin --token=%adminpwd% --url=https://%myFQDN%:8443
-	Примечание для параметра input:
-		Для TeamCity: --input "%system.teamcity.build.workingDir%"
-		Для Gitlab:   --input "$CI_PROJECT_DIR"
-		Для Jenkins:  --input ""
+	java -jar /путь/к/плагину/ptai-cli-plugin.jar slim-ui-ast --input="%cd%" --project="ИмяПроектаИзAIViewer" --node=PTAI --user=admin --token=%adminpwd% --url=https://%myFQDN%:8443
+	Примечание: при запуске в unix системах параметр input заменить на "$PWD"
 7. Вставьте строку запуска в шаг сборки
 8. Сохраните и запустите сборку
 
@@ -53,6 +50,8 @@
 
 ---ДОПОЛНИТЕЛЬНО---
 Полный список доступных параметров плагина можно получить, если обратиться к нему без параметров: 
+	> java -jar ptai-cli-plugin.jar
+Параметр slim-ui-ast покажет настройки, непосредственно относящиеся к запуску сканирования:
 	> java -jar ptai-cli-plugin.jar slim-ui-ast
 	Usage: java -jar ptai-cli-plugin.jar slim-ui-ast [-v] --url=<url> -u=<name>
 		-t=<token> --input=<path> [--output=<path>] -p=<name> [-i=<pattern>]
