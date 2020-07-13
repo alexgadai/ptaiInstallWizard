@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<service>
+    <id>Jenkins.Agent</id>
+    <name>Jenkins.Agent</name>
+    <description>Jenkins Agent</description>
+    <executable>java</executable>
+    <arguments>-jar agent.jar -jnlpUrl https://win2019.domain.org:8080/computer/LOCAL/slave-agent.jnlp -secret 6c88a8be5b54048636509810b144427f9704f524e6bbef457f8682e92b1084a5 -workDir "C:\TOOLS\jenkins"
+    </arguments>
+	<depend>Jenkins</depend>
+	<onfailure action="restart" delay="5 sec"/>
+</service>
