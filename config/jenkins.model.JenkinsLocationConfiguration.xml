@@ -1,5 +1,0 @@
-<?xml version='1.1' encoding='UTF-8'?>
-<jenkins.model.JenkinsLocationConfiguration>
-  <adminAddress>адрес еще не настроен &lt;nobody@nowhere&gt;</adminAddress>
-  <jenkinsUrl>https://ptaisrv.domain.org:8443/</jenkinsUrl>
-</jenkins.model.JenkinsLocationConfiguration>
