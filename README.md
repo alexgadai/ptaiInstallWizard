@@ -8,7 +8,7 @@
 3.	Запустить Powershell с правами администратора
 4.	Запустить скрипт инсталляции, пример запуска:
 ```powershell
-.\install.ps1 -aiepath C:\Users\Administrator\Downloads\AIE -toolspath C:\TOOLS
+.\AI-one-click-install.ps1 -aiepath C:\Users\Administrator\Downloads\AIE -toolspath C:\TOOLS
 # aiepath 	- путь до каталога с дистрибутивом AI (там где папки aic/aiv/aie)
 # toolspath	– каталог, куда будут перемещены артефакты установки (сертификаты, пароли)
 ```
