@@ -1,10 +1,10 @@
 ﻿#Requires -RunAsAdministrator
 
 # Инсталлятор AI Enterprise и его окружения
-# версия 1.0 от 07.11.2020
+# версия 1.1 от 12.11.2020
 
 # Если сценарии Powershell заблокированы доменной политикой, перед запуском скрипта выполните команду:
-# Set-ExecutionPolicy RemoteSigned -Scope Process
+# Set-ExecutionPolicy Unrestricted Process
 
 Param (
 [string]$aiepath, # путь к каталогу с дистрибутивом AIE
@@ -73,9 +73,8 @@ function Generate-Password {
 		return $outputString 
 	}
 	
-	$password = Get-RandomCharacters -length 15 -characters 'abcdefghiklmnoprstuvwxyzABCDEFGHKLMNOPRSTUVWXYZ1234567890!*()[]_=+'
-	$password = Scramble-String $password
-	return $password
+	$password = Get-RandomCharacters -length 15 -characters 'abcdefghiklmnoprstuvwxyzABCDEFGHKLMNOPRSTUVWXYZ1234567890!*()[]_+'
+	return Scramble-String $password
 }
 
 # скопировать логи AIE
@@ -105,20 +104,13 @@ function Copy-AIE-Logs($ServiceDownList) {
 
 # добавить текущего пользователя в качестве администратора AI через запрос в базу данных
 function AI-Add-Admin {
-	if ([System.IO.File]::Exists("C:\Program Files\Positive Technologies\Application Inspector Server\Services\gateway\AIE.Gateway.exe")) {
-		$sid = ([System.Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
-		$env:PGPASSWORD = $passwords['postgres']
-		."C:\Program Files\PostgreSQL\10\bin\psql.exe" -h 127.0.0.1 -p 5432 -U postgres -d ai_csi -c "INSERT INTO \`"GlobalMemberEntity\`" (\`"Sid\`", \`"RoleId\`") VALUES ('$sid', '1');"
-		# рестарт службы аутентификации
-		net stop AI.Enterprise.AuthService
-		net start AI.Enterprise.AuthService
-		Start-Sleep 10
-	}
-	else {
-		Write-Host 'Ошибка: Компонент AI Server не установлен.' -ForegroundColor Red
-		Stop-Transcript
-		Exit 1
-	}
+	$sid = ([System.Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+	$env:PGPASSWORD = $passwords['postgres']
+	."C:\Program Files\PostgreSQL\10\bin\psql.exe" -h 127.0.0.1 -p 5432 -U postgres -d ai_csi -c "INSERT INTO \`"GlobalMemberEntity\`" (\`"Sid\`", \`"RoleId\`") VALUES ('$sid', '1');"
+	# рестарт службы аутентификации
+	net stop AI.Enterprise.AuthService
+	net start AI.Enterprise.AuthService
+	Start-Sleep 10
 }
 
 # генерация самоподписанных сертификатов
@@ -442,7 +434,7 @@ $config = @"
 "DbPwd":"%DbPwd%",
 "DbName":"ai_csi",
 "QueuePort":5672,
-"QueueUser":"aiuser",
+"QueueUser":"ai_user",
 "QueuePwd":"%QueuePwd%",
 "Host":"%Host%",
 "ProjectsPort":5001,
@@ -476,11 +468,13 @@ $config = @"
 $readme = @"
 ---ПОЛУЧЕНИЕ ЛИЦЕНЗИИ---
 1. Откройте в браузере https://%myFQDN%/ui/admin/settings#license
+	Ваш логин: %username%
 2. Нажмите Сгенерировать фингерпринт
 3. Отправьте файл специалисту Positive Technologies для получения лицензии
 
 ---ВСТРАИВАНИЕ В JENKINS---
-1. Установите плагин %toolspath%\ptai-jenkins-plugin.hpi на сервер Jenkins через веб-интерфейс
+0. Скачайте плагин по ссылке https://storage.ptsecurity.com/f/d882168dcdb54a6a81cc/?dl=1
+1. Установите плагин ptai-jenkins-plugin.hpi через веб-интерфейс Jenkins
 2. Перейдите в меню Настройки системы
 3. Найдите раздел Анализ уязвимостей PT AI
 4. Добавьте глобальную конфигурацию PT AI
@@ -496,12 +490,14 @@ $readme = @"
 6. Нажмите Проверить соединение
 7. Откройте настройки сборки вашего проекта и добавьте шаг сборки "Анализ уязвимостей PT AI"
 8. Укажите Наименование проекта, созданного в программе AI Viewer
-9. При необходимости добавьте отчёт в интересующем формате
+9. При необходимости добавьте отчёт в интересующем вас формате
+	Список шаблонов отчётов можно посмотреть на странице https://%myFQDN%/ui/admin/settings#reports
 10. Сохраните и запустите сборку
 
 ---ВСТРАИВАНИЕ В TEAMCITY---
-1. Установите плагин %toolspath%\ptai-teamcity-plugin.zip на сервер Teamcity через веб-интерфейс
-2. Перейдите в меню Administration -> Integrations -> PT AI
+0. Скачайте плагин по ссылке <TBD>
+1. Установите плагин ptai-teamcity-plugin.zip через веб-интерфейс Teamcity
+2. В Teamcity перейдите в меню Administration -> Integrations -> PT AI
 3. Укажите следующие данные:
 	PT AI server URL: https://%myFQDN%
 	PT AI API token: создать в веб-интерфейсе https://%myFQDN%/ui/admin/settings#tokens
@@ -510,25 +506,34 @@ $readme = @"
 5. Нажмите Save
 6. Откройте настройки сборки вашего проекта и добавьте шаг сборки "PT AI"
 7. Укажите имя проекта, созданного в программе AI Viewer, в параметре Project name
-8. Сохраните и запустите сборку
+8. При необходимости добавьте отчёт в интересующем вас формате
+	Список шаблонов отчётов можно посмотреть на странице https://%myFQDN%/ui/admin/settings#reports
+9. Сохраните и запустите сборку
 
----ВСТРАИВАНИЕ В ДРУГИЕ СИСТЕМЫ CI/CD---
-1. Установите Java JDK 1.8 на агента сборки
-2. Скопируйте плагин ptai-cli-plugin.jar на хост агента сборки и запомните полный путь к нему
-3. Скопируйте сертификат сервера на хост агента сборки: 
+---ВСТРАИВАНИЕ В GITLAB ИЛИ ИНЫЕ СИСТЕМЫ ПОСРЕДСТВОМ ВЫЗОВА КОМАНДНОЙ СТРОКИ---
+0. Скачайте плагин по ссылке https://storage.ptsecurity.com/f/34f49ff09ed248568930/?dl=1
+1. Скопируйте плагин ptai-cli-plugin.jar на хост агента сборки Gitlab и запомните полный путь к нему
+2. Скопируйте сертификат сервера на хост агента сборки: 
 	%toolspath%\certs\ai-chain.crt
-4. Импортируйте сертификат сервера в хранилище сертификатов Java агента сборки, выполнив на нём следующие команды (пример):
+3. Установите Java JDK 1.8 на хост агента сборки
+4. Импортируйте сертификат сервера в хранилище сертификатов Java агента сборки, выполнив на нём следующую команду (пример):
 	keytool -importcert -keystore $JAVA_HOME/jre/lib/security/cacerts -storepass "changeit" -alias AIRootCA -file ai-chain.crt -noprompt
 	, где -keystore - путь к хранилищу сертификатов
 		  -storepass - пароль от хранилища сертификатов
 		  -file - путь к файлу сертификата для импорта
-5. Откройте настройки сборки вашего проекта в CI-системе и добавьте шаг "вызов командной строки"
-6. Создайте токен доступа для легкого агента и плагинов CI/CD в веб-интерфейсе https://%myFQDN%/ui/admin/settings#tokens
-7. Подготовьте строку запуска AI по примеру:
-	java -jar /путь/к/плагину/ptai-cli-plugin.jar ui-ast --input="$PWD" --project="ИмяПроектаИзAIViewer" --token="ваш_токен" --url=https://%myFQDN%
+5. Создайте токен доступа для легкого агента и плагинов CI/CD в веб-интерфейсе https://%myFQDN%/ui/admin/settings#tokens
+6. Подготовьте строку запуска AI по примеру:
+	java -jar /путь/к/плагину/ptai-cli-plugin.jar ui-ast --input="$PWD" --project="ИмяПроектаИзAIViewer" --report-json="ai-reports.json" --token="ваш_токен" --url=https://%myFQDN%
 	Примечание: при запуске в Windows системах параметр input заменить на "%cd%"
-8. Вставьте строку запуска в шаг сборки
-9. Сохраните и запустите сборку
+				для Gitlab в параметр input можно подставить переменную $CI_PROJECT_DIR
+7. Укажите список требуемых отчётов в файле ai-reports.json и путь к нему в строке запуска, пример файла см. в %toolspath%\ai-reports.json
+	Можно сохранить этот файл на операционной системе агента сборки, либо поместить его в репозиторий сканируемого проекта
+	Список шаблонов отчётов можно посмотреть на странице https://%myFQDN%/ui/admin/settings#reports
+	Настройки фильтров см. в схеме метода /api/Reports/generate: https://%myFQDN%/swagger/index.html?urls.primaryName=projectManagement
+8. Вставьте строку запуска в конфигурацию сборки .gitlab-ci.yml, пример см. в %toolspath%\gitlab-ci-example.yml
+9. Сохраните изменения и запустите сборку
+10. Полный список доступных опций плагина можно получить, если обратиться к нему без параметров:
+	> java -jar ptai-cli-plugin.jar
 
 ---ПАРОЛИ---
 Пароли, заданные в процессе установки, сохранены в файле %toolspath%\passwords.txt. Пожалуйста, сохраните их в безопасном месте и удалите файлы passwords.txt и passwords.xml.
@@ -536,47 +541,46 @@ $readme = @"
 ---БЕЗОПАСНОСТЬ---
 Для обеспечения безопасности сервера закройте на межсетевом экране все порты, кроме 443.
 При наличии антивируса рекомендуется добавить каталог "C:\Program Files\Positive Technologies\Application Inspector Agent" в исключения, т.к. некоторые антивирусы могут блокировать подозрительную активность, когда AI взаимодействует с файламами во время сканирования.
+"@
 
----ДОПОЛНИТЕЛЬНО---
-Полный список доступных параметров плагина можно получить, если обратиться к нему без параметров: 
-	> java -jar ptai-cli-plugin.jar
-Параметр ui-ast покажет настройки, непосредственно относящиеся к запуску сканирования:
-	> java -jar ptai-cli-plugin.jar ui-ast
-		Usage: java -jar ptai-cli-plugin.jar ui-ast [-v] --url=<url> -t=<token>
-			--input=<path> [--output=<path>] -p=<name> [-i=<pattern>] [-e=<pattern>]
-			[-n=<name>] [--truststore=<path>]
-		Calls PT AI for AST. Project settings are defined in the PT AI viewer UI
-			--url=<url>            PT AI integration service URL, i.e. https://ptai.
-									domain.org:8443
-		-t, --token=<token>        PT AI integration service API token
-			--input=<path>         Source file or folder to scan
-			--output=<path>        Folder where AST reports are to be stored. By
-									default .ptai folder is used
-		-p, --project=<name>       Project name how it is setup and seen in the PT AI
-									viewer
-		-i, --includes=<pattern>   Comma-separated list of files to include to scan.
-									The string is a comma separated list of includes
-									for an Ant fileset eg. '**/*.jar'(see http://ant.
-									apache.org/manual/dirtasks.html#patterns). The
-									base directory for this fileset is the sources
-									folder
-		-e, --excludes=<pattern>   Comma-separated list of files to exclude from
-									scan. The syntax is the same as for includes
-		-n, --node=<name>          Node name or tag for SAST to be executed on
-			--truststore=<path>    Path to PEM file that stores trusted CA
-									certificates
-		-v, --verbose              Provide verbose console log output
-	Exit Codes:
-		0      AST complete, policy (if set up) assessment success
-		1      AST complete, policy (if set up) assessment failed
-		2      AST complete, policy (if set up) assessment success, minor warnings
-				were reported
-		3      AST failed
-		1000   Invalid input
+$gitlabci = @"
+test:
+  script:
+    - java -jar ptai-cli-plugin.jar ui-ast --project="Gitlab" --input="$CI_PROJECT_DIR" --report-json="ai-reports.json" -t="k0K4nVTr2OmroxH/Zzc2Bnwbv+3LDhV3" --url="https://ptaisrv.domain.org" --excludes=**/*.lck
+  only:
+    variables:
+      - $CI_COMMIT_MESSAGE =~ /AIEE/
+  tags: 
+    - aiee
+  artifacts:
+    expire_in: 3 day
+    paths:
+      - .ptai/ 
+"@
+
+$aireports = @"
+[ {
+  "template" : "Отчет по результатам сканирования",
+  "format" : "HTML",
+  "locale" : "RU",
+  "name" : "ai.results.filtered.html",
+  "filters": {
+    "issueLevel": "High",
+    "exploitationCondition": "ALL",
+    "scanMode": "FromEntryPoint",
+    "suppressStatus": "ALL",
+    "confirmationStatus": "ALL",
+    "sourceType": "ALL"
+  }
+},{
+  "template" : "Отчет PCI DSS 3.2",
+  "format" : "HTML",
+  "locale" : "RU",
+  "name" : "pci.dss.3.2.ru.html"
+} ]
 "@
 
 #TODO: uninstall script
-#TODO: update readme
 
 # проверка параметра toolspath
 if ($toolspath -eq $PSScriptRoot) {
@@ -606,9 +610,15 @@ if ($psver.version.Major -lt 5) {
 }
 Check-NetFramework-Version
 # проверка openssl
-# https://aka.ms/vs/16/release/vc_redist.x64.exe
 try {
-	openssl genrsa -out 1.key 1024 > $null
+	# обновляем знания текущей сессии Powershell о Path
+	$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+	if (-Not ($env:Path.ToLower().contains('openssl')) -And (Test-Path "C:\Program Files\OpenSSL-Win64\bin\openssl.exe")) {
+		# обновляем глобальную переменную Path
+		[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Program Files\OpenSSL-Win64\bin", "Machine")
+		$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+	}
+	openssl genrsa -out 1.key 1024 2>$null
 	Remove-Item 1.key -ErrorAction Stop
 	}
 catch {
@@ -629,7 +639,6 @@ if ([System.IO.File]::Exists("$toolspath\passwords.xml")) {
 	$passwords = Import-Clixml -Path "$toolspath\passwords.xml"
 }
 else {
-	# генерируем безопасные пароли
 	Write-Host 'Генерирую безопасные пароли...' -ForegroundColor Yellow
 	$passwords = @{
 			'serverCertificate'=Generate-Password;
@@ -653,12 +662,14 @@ else {
 	# после установки программа запускается - закрываем её
 	$AIViewer = Get-Process ApplicationInspector -ErrorAction SilentlyContinue
 	if ($AIViewer -ne $null) {Stop-Process $AIViewer}
-}	
+}
 # проверка домена
 [bool] $noad = 1
 if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain) {
 	# преобразуем утилиту ADTOOL hex -> exe
-	[IO.File]::WriteAllBytes("$toolspath\ADTool.exe", [Convert]::FromBase64String($hex))
+	if (-Not (Test-Path "$toolspath\ADTool.exe")) {
+		[IO.File]::WriteAllBytes("$toolspath\ADTool.exe", [Convert]::FromBase64String($hex))
+	}
 	# проверяем наличие пользователя в домене
 	Write-Host "Проверяю связь с домен контроллером..." -ForegroundColor Yellow
 	$domain = ((Get-WmiObject win32_computersystem).Domain).ToLower()
@@ -757,7 +768,10 @@ else {
 # устанавливаем AI Server
 Write-Host '---ШАГ 4---' -ForegroundColor Green
 # проверяем если AI Server уже установлен
-if (-Not [System.IO.File]::Exists("C:\Program Files\Positive Technologies\Application Inspector Server\Services\gateway\AIE.Gateway.exe")) {
+if ([System.IO.File]::Exists("C:\Program Files\Positive Technologies\Application Inspector Server\Services\gateway\AIE.Gateway.exe")) {
+	Write-Host 'Этот шаг уже был выполнен, переходим к следующему.' -ForegroundColor Yellow
+}
+else {
 	# проверка доступности портов
 	[int32[]]$ports = 80,443,5432,5672,5001,7001,5002,5004,4444,5005,5006,5007,8200,5003,8500,5010,5011,5012,5008
 	$errcnt = 0
@@ -765,15 +779,14 @@ if (-Not [System.IO.File]::Exists("C:\Program Files\Positive Technologies\Applic
 		$available = netstat -na | findstr /r /c:":$($ports[$i]) *[^ ]*:[^ ]*"
 		if ($available -ne $null) {
 			Write-Host "Ошибка: порт $($ports[$i]) занят." -ForegroundColor Red
-			Write-Host $available
 			$errcnt++
 		}
 	}
 	if ($errcnt -gt 0) {
 		Write-Host 'Пожалуйста, освободите занятые порты, либо проведите установку компонента AI Server вручную.' -ForegroundColor Red
-		Write-Host 'https://myhelpit.ru/index.php?id=163'
+		Write-Host 'Возможно, вам поможет эта статья: https://myhelpit.ru/index.php?id=163'
 		Stop-Transcript
-		Exit 1	
+		Exit 1
 	}
 	Write-Host 'Устанавливаю AI Server...' -ForegroundColor Yellow
 	# патчим файл конфигурации инсталлятора
@@ -798,7 +811,8 @@ if (-Not [System.IO.File]::Exists("C:\Program Files\Positive Technologies\Applic
 	}
 	Handle-Install-Result "AI Server" $proc
 	Start-Sleep 10
-	xcopy "C:\ProgramData\Application Inspector\Logs\deploy" $toolspath\logs\deploy\ /E /Y 
+	xcopy "C:\ProgramData\Application Inspector\Logs\deploy" $toolspath\logs\deploy\ /E /Y
+	# дополнительные манипуляции для установок без домена
 	if ($noad) {
         # получаем мастер-токен консула
 		$conf_consul = Get-Content -path 'C:\Program Files\Positive Technologies\Application Inspector Server\Services\consul\serverConfig.json' | ConvertFrom-Json
@@ -836,14 +850,14 @@ if ($ServiceDownList.Count -gt 0) {
 	$rusers = (& "C:\Program Files\RabbitMQ Server\rabbitmq_server-3.7.8\sbin\rabbitmqctl.bat" list_users).split()
 	Write-Host "Пользователи rabbitMQ: " $rusers
 	for ($i=0; $i -lt $rusers.Count; $i++) {
-		if ($rusers[$i] -eq 'aiuser') {
+		if ($rusers[$i] -eq 'ai_user') {
 			$exists = $true
 		}
 	}
 	# если нет такого юзера, добавляем его и перезапускаем службы
 	if (-Not $exists) {
-		&"C:\Program Files\RabbitMQ Server\rabbitmq_server-3.7.8\sbin\rabbitmqctl.bat" add_user aiuser $passwords['rabbitMQ']
-		&"C:\Program Files\RabbitMQ Server\rabbitmq_server-3.7.8\sbin\rabbitmqctl.bat" set_permissions -p / aiuser ".*" ".*" ".*"
+		&"C:\Program Files\RabbitMQ Server\rabbitmq_server-3.7.8\sbin\rabbitmqctl.bat" add_user ai_user $passwords['rabbitMQ']
+		&"C:\Program Files\RabbitMQ Server\rabbitmq_server-3.7.8\sbin\rabbitmqctl.bat" set_permissions -p / ai_user ".*" ".*" ".*"
 		$AIServices = Get-Service AI.*
 		for ($i=0; $i -lt $AIServices.Length; $i++) {
 			Start-Sleep 2
@@ -874,16 +888,16 @@ if ([System.IO.File]::Exists("C:\Program Files\Positive Technologies\Application
 	Write-Host 'Этот шаг уже был выполнен, переходим к следующему.' -ForegroundColor Yellow
 }
 elseif ($skipagent) {
-		Write-Host 'Пропускаю этап установки агента.' -ForegroundColor Yellow
+	Write-Host 'Пропускаю этап установки агента.' -ForegroundColor Yellow
 }
 else {
 	# проверяем состояние ключевых служб для выдачи токена
 	if (((Get-Service AI.Enterprise.AuthService).Status -eq "Running") -and ((Get-Service AI.Enterprise.Gateway).Status -eq "Running")) {
+		# назначаем версию TLS
 		[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
 		# получить bearer token
 		try {
 			$bearer = Invoke-RestMethod -Uri "https://$($myFQDN)/api/auth/signin?scopeType=Viewer" -Method GET -Headers @{"Accept"="text/plain"} -UseDefaultCredentials
-			Write-Host "TEST: no certificate issues"
 		}
 		catch {
 			Write-Host "TEST: certificate issues"
@@ -898,7 +912,7 @@ else {
 						return true;
 					}
 				}
-"@	
+"@
 			[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy	
 			$bearer = Invoke-RestMethod -Uri "https://$($myFQDN)/api/auth/signin?scopeType=Viewer" -Method GET -Headers @{"Accept"="text/plain"} -UseDefaultCredentials
 			Write-Host "TEST: got bearer token"
@@ -935,8 +949,17 @@ else {
 }
 
 # заменяем ключевые значения в readme
+if ($noad) {
+	$username = ".\"+$env:UserName
+}
+else {
+	$username = $env:UserName
+}
 $readme = $readme -ireplace '%myFQDN%',"$myFQDN"
+$readme = $readme -ireplace '%username%',"$username"
 $readme -ireplace '%toolspath%',"$toolspath" | Set-Content -Path $toolspath\readme.txt -Encoding UTF8
+$gitlabci | Set-Content -Path $toolspath\gitlab-ci-example.yml -Encoding UTF8
+$aireports | Set-Content -Path $toolspath\ai-reports.json -Encoding UTF8
 try {
 	Get-Service hasplms | Out-Null
 	Write-Host "Установка завершена." -ForegroundColor Yellow
