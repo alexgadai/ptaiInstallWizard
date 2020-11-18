@@ -1,14 +1,11 @@
 ﻿#Requires -RunAsAdministrator
 
 # Инсталлятор AI Enterprise и его окружения
-# версия 1.1 от 12.11.2020
-
-# Если сценарии Powershell заблокированы доменной политикой, перед запуском скрипта выполните команду:
-# Set-ExecutionPolicy Unrestricted Process
+# версия 1.2 от 18.11.2020
 
 Param (
 [string]$aiepath, # путь к каталогу с дистрибутивом AIE
-[string]$toolspath, # путь к каталогу, куда будут помещены артефакты инсталляции (логи, пароли)
+[string]$toolspath, # путь к каталогу, куда будут помещены артефакты инсталляции (логи, пароли) (по умолчанию - C:\AI-TOOLS)
 [switch]$skipagent, # пропустить этап установки агента сканирования
 # параметры ниже могут быть не заданы - тогда будут сгенерированы самоподписанные сертификаты
 [string]$rootcertpath, # путь к корневому сертификату (pfx/crt)
@@ -111,6 +108,18 @@ function AI-Add-Admin {
 	net stop AI.Enterprise.AuthService
 	net start AI.Enterprise.AuthService
 	Start-Sleep 10
+}
+
+# временное решение: фикс ошибки ERR_HTTP2_INADEQUATE_TRANSPORT_SECURITY на Win2012R2
+function Fix-HTTP2-Error {
+	$conf_consul = Get-Content -path 'C:\Program Files\Positive Technologies\Application Inspector Server\Services\consul\serverConfig.json' | ConvertFrom-Json
+	$consul_token = $conf_consul.acl.tokens.master
+	$i = Invoke-WebRequest -Uri "http://localhost:8500/v1/kv/services/gateway/Kestrel?dc=dc1" -Headers @{"X-Consul-Token"="$consul_token"}
+	$body = $i.Content | ConvertFrom-Json
+	$json = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($body.Value)) | ConvertFrom-Json
+	$json.EndPoints.HttpsInlineCertStore | add-member -Name "Protocols" -value "Http1" -MemberType NoteProperty -Force
+	$res = $json | ConvertTo-json
+	Invoke-WebRequest -Uri "http://localhost:8500/v1/kv/services/gateway/Kestrel?dc=dc1" -Method "PUT" -Headers @{"X-Consul-Token"="$consul_token"} -ContentType "application/json; charset=UTF-8" -Body "$res"
 }
 
 # генерация самоподписанных сертификатов
@@ -582,14 +591,9 @@ $aireports = @"
 
 #TODO: uninstall script
 
-# проверка параметра toolspath
-if ($toolspath -eq $PSScriptRoot) {
-	Write-Host "Ошибка: Параметр toolspath должен указывать на другой каталог, отличный от каталога с утилитами." -ForegroundColor Red
-	Exit 1
-}
-
 # инициализация логирования
 Set-Location -Path $PSScriptRoot
+if ($toolspath -eq '') {$toolspath = "C:\AI-TOOLS"}
 if (-Not (Test-Path $toolspath\logs)) {mkdir $toolspath\logs >$null}
 if (Test-Path $toolspath\logs\install.log) {
 	Move-Item $toolspath\logs\install.log "$toolspath\logs\install-$((Get-Date).Ticks).log"
@@ -812,6 +816,10 @@ else {
 	Handle-Install-Result "AI Server" $proc
 	Start-Sleep 10
 	xcopy "C:\ProgramData\Application Inspector\Logs\deploy" $toolspath\logs\deploy\ /E /Y
+	# исправление для Windows Server 2012 R2
+	if ([System.Environment]::OSVersion.Version.Major.ToString()+"."+[System.Environment]::OSVersion.Version.Minor.ToString() -eq "6.3") {
+		Fix-HTTP2-Error
+	}
 	# дополнительные манипуляции для установок без домена
 	if ($noad) {
         # получаем мастер-токен консула
