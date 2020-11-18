@@ -8,8 +8,8 @@
 3.	Запустить Powershell с правами администратора
 4.	Запустить скрипт инсталляции, пример запуска:
 ```powershell
-.\install.ps1 -aiepath C:\Users\Administrator\Downloads\AIE
-# aiepath 	- путь до каталога с дистрибутивом AI (там где папки aic/aiv/aie)
+.\AI-one-click-install.ps1 -aiepath C:\Users\Administrator\Downloads\AIE
+# aiepath - путь до каталога с дистрибутивом AI (там где папки aic/aiv/aie)
 ```
 5.	Если скрипт не запускается из-за ограничений доменной политики, выполните следующую команду и попробуйте снова:
 ```powershell
