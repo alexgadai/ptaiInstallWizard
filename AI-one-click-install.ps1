@@ -1,7 +1,7 @@
 ﻿#Requires -RunAsAdministrator
 
 # Инсталлятор AI Enterprise и его окружения
-# версия 1.2 от 18.11.2020
+# версия 1.3 от 01.12.2020
 
 Param (
 [string]$aiepath, # путь к каталогу с дистрибутивом AIE
@@ -108,18 +108,6 @@ function AI-Add-Admin {
 	net stop AI.Enterprise.AuthService
 	net start AI.Enterprise.AuthService
 	Start-Sleep 10
-}
-
-# временное решение: фикс ошибки ERR_HTTP2_INADEQUATE_TRANSPORT_SECURITY на Win2012R2
-function Fix-HTTP2-Error {
-	$conf_consul = Get-Content -path 'C:\Program Files\Positive Technologies\Application Inspector Server\Services\consul\serverConfig.json' | ConvertFrom-Json
-	$consul_token = $conf_consul.acl.tokens.master
-	$i = Invoke-WebRequest -Uri "http://localhost:8500/v1/kv/services/gateway/Kestrel?dc=dc1" -Headers @{"X-Consul-Token"="$consul_token"}
-	$body = $i.Content | ConvertFrom-Json
-	$json = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($body.Value)) | ConvertFrom-Json
-	$json.EndPoints.HttpsInlineCertStore | add-member -Name "Protocols" -value "Http1" -MemberType NoteProperty -Force
-	$res = $json | ConvertTo-json
-	Invoke-WebRequest -Uri "http://localhost:8500/v1/kv/services/gateway/Kestrel?dc=dc1" -Method "PUT" -Headers @{"X-Consul-Token"="$consul_token"} -ContentType "application/json; charset=UTF-8" -Body "$res"
 }
 
 # генерация самоподписанных сертификатов
@@ -504,7 +492,7 @@ $readme = @"
 10. Сохраните и запустите сборку
 
 ---ВСТРАИВАНИЕ В TEAMCITY---
-0. Скачайте плагин по ссылке <TBD>
+0. Скачайте плагин по ссылке https://storage.ptsecurity.com/f/529a6c675d504a899721/?dl=1
 1. Установите плагин ptai-teamcity-plugin.zip через веб-интерфейс Teamcity
 2. В Teamcity перейдите в меню Administration -> Integrations -> PT AI
 3. Укажите следующие данные:
@@ -574,7 +562,7 @@ $aireports = @"
   "locale" : "RU",
   "name" : "ai.results.filtered.html",
   "filters": {
-    "issueLevel": "High",
+    "issueLevel": "HIGH",
     "exploitationCondition": "ALL",
     "scanMode": "FromEntryPoint",
     "suppressStatus": "ALL",
@@ -669,6 +657,9 @@ else {
 }
 # проверка домена
 [bool] $noad = 1
+$myFQDN = (Get-WmiObject win32_computersystem).DNSHostName
+$domain = "localhost"
+# переопределяем параметры если установка с доменом
 if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain) {
 	# преобразуем утилиту ADTOOL hex -> exe
 	if (-Not (Test-Path "$toolspath\ADTool.exe")) {
@@ -694,11 +685,6 @@ if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain) {
 	# если не нашли в текущем домене, сокращаем название домена до следующей точки и пробуем снова
 	# это связано с тем, что иногда для ADTool нужно указывать корневой домен
 	while ($newdomain -match '(?<=\.).*')
-}
-# задаём основные переменные для noad установки
-if ($noad){
-	$myFQDN = (Get-WmiObject win32_computersystem).DNSHostName
-	$domain = "localhost"
 }
 
 # обрабатываем сертификаты
@@ -787,8 +773,8 @@ else {
 		}
 	}
 	if ($errcnt -gt 0) {
-		Write-Host 'Пожалуйста, освободите занятые порты, либо проведите установку компонента AI Server вручную.' -ForegroundColor Red
-		Write-Host 'Возможно, вам поможет эта статья: https://myhelpit.ru/index.php?id=163'
+		Write-Host 'Пожалуйста, освободите занятые порты, либо исправьте порт в переменной config данного скрипта и перезапустите его.' -ForegroundColor Red
+		Write-Host 'Если у вас занят 80-ый порт и вы не знаете почему, возможно, вам поможет эта статья: https://myhelpit.ru/index.php?id=163'
 		Stop-Transcript
 		Exit 1
 	}
@@ -815,11 +801,7 @@ else {
 	}
 	Handle-Install-Result "AI Server" $proc
 	Start-Sleep 10
-	xcopy "C:\ProgramData\Application Inspector\Logs\deploy" $toolspath\logs\deploy\ /E /Y
-	# исправление для Windows Server 2012 R2
-	if ([System.Environment]::OSVersion.Version.Major.ToString()+"."+[System.Environment]::OSVersion.Version.Minor.ToString() -eq "6.3") {
-		Fix-HTTP2-Error
-	}
+	xcopy "C:\ProgramData\Application Inspector\Logs\deploy" $toolspath\logs\deploy\ /E /Y >$null
 	# дополнительные манипуляции для установок без домена
 	if ($noad) {
         # получаем мастер-токен консула
@@ -884,7 +866,7 @@ if ($ServiceDownList.Count -gt 0) {
 	}
 	if ($ServiceDownList.Count -gt 0) {
 		Copy-AIE-Logs $ServiceDownList
-		xcopy $env:APPDATA\RabbitMQ\log $toolspath\logs\RabbitMQ\ /E /Y
+		xcopy $env:APPDATA\RabbitMQ\log $toolspath\logs\RabbitMQ\ /E /Y >$null
 		Write-Host "Ошибка: AI Server установлен, но некоторые службы не смогли запуститься. Пожалуйста, отправьте каталог с логами $toolspath\logs специалисту из Positive Technologies для анализа." -ForegroundColor Red
 	}
 }
@@ -908,7 +890,6 @@ else {
 			$bearer = Invoke-RestMethod -Uri "https://$($myFQDN)/api/auth/signin?scopeType=Viewer" -Method GET -Headers @{"Accept"="text/plain"} -UseDefaultCredentials
 		}
 		catch {
-			Write-Host "TEST: certificate issues"
 			# если сохранились проблемы с защищёнными соединениями, выключаем проверку сертификата
 			add-type @"
 				using System.Net;
@@ -923,7 +904,6 @@ else {
 "@
 			[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy	
 			$bearer = Invoke-RestMethod -Uri "https://$($myFQDN)/api/auth/signin?scopeType=Viewer" -Method GET -Headers @{"Accept"="text/plain"} -UseDefaultCredentials
-			Write-Host "TEST: got bearer token"
 		}
 		# готовим и отсылаем запрос на получение токена
 		$headers = @{

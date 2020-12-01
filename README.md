@@ -4,7 +4,7 @@
 Для запуска:
 1.	Выполнить вход в Windows под учётной записью с правами администратора
 2.	Установить Win64 OpenSSL v1.1.1h Light https://slproweb.com/products/Win32OpenSSL.html
--	Также для установки самого OpenSSL потребуются редисты: https://aka.ms/vs/16/release/vc_redist.x64.exe
+-	Также для установки самого OpenSSL могут потребоваться редисты: https://aka.ms/vs/16/release/vc_redist.x64.exe
 3.	Запустить Powershell с правами администратора
 4.	Запустить скрипт инсталляции, пример запуска:
 ```powershell
