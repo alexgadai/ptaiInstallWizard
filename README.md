@@ -18,7 +18,3 @@ Set-ExecutionPolicy Unrestricted Process
 6.	Если установка производится на Windows Server 2012 R2, также потребуется установить пакеты:
 -	http://www.catalog.update.microsoft.com/Search.aspx?q=3191564 
 -	https://dotnet.microsoft.com/download/dotnet-framework/thank-you/net48-offline-installer 
-
-
-TODO:
-- скрипт деинсталляции
